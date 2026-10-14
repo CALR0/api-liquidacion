@@ -256,8 +256,5 @@ Queda en `http://localhost:8000`.
 **Seguridad:**
 - La API es de solo lectura sobre Silogtran.
 - Funciona solo por HTTPS y con token Bearer obligatorio.
-- Las credenciales viven solo en variables de entorno y `.env` está excluido de git.
-- Los logs no registran tokens ni credenciales.
 
-**Validación:** el resultado del 2026-10-02 (254 filas, 52 columnas, totales de montos) coincide
-100 % con el Informe General descargado desde Silogtran.
+Todos los derechos reservados.
