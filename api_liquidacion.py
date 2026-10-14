@@ -588,10 +588,14 @@ def main():
 
     CLIENT = SilogtranClient(USUARIO, CLAVE)
     REPO = Repositorio(CLIENT)
-    try:
-        CLIENT.keepalive()  # valida credenciales al arrancar
-    except Exception as e:
-        log.warning("No se pudo iniciar sesión al arrancar (%s); se reintentará en la primera consulta", e)
+    def _login_inicial():
+        try:
+            CLIENT.keepalive()  # valida credenciales al arrancar
+            log.info("Sesión en Silogtran iniciada")
+        except Exception as e:
+            log.warning("No se pudo iniciar sesión al arrancar (%s); se reintentará en la primera consulta", e)
+    # En segundo plano: el puerto abre de inmediato aunque Silogtran tarde en responder
+    threading.Thread(target=_login_inicial, daemon=True).start()
     if KEEPALIVE_MINUTOS > 0:
         threading.Thread(target=_bucle_keepalive, args=(CLIENT,), daemon=True).start()
     if AUTOPING_URL and AUTOPING_MINUTOS > 0:
