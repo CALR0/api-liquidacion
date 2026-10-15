@@ -12,6 +12,7 @@ Endpoints (todos con header  Authorization: Bearer <API_KEY>, salvo /health):
     GET /v1/esquema       columnas, tipos y descripción
     GET /health           estado del servicio (sin token)
 
+Rangos: se descargan meses completos (caché por mes) y se recortan al rango pedido.
 Toda la configuración va en variables de entorno o en un archivo .env (ver .env.example).
 """
 
@@ -80,6 +81,8 @@ MAX_PETICIONES_MINUTO = _env_int("MAX_PETICIONES_MINUTO", 20)
 # Render define RENDER_EXTERNAL_URL automáticamente; AUTOPING_URL permite indicarla a mano.
 AUTOPING_URL = (os.environ.get("AUTOPING_URL") or os.environ.get("RENDER_EXTERNAL_URL") or "").rstrip("/")
 AUTOPING_MINUTOS = float(os.environ.get("AUTOPING_MINUTOS", "") or 10)
+# Cada cuántos minutos se refresca en segundo plano el mes en curso (0 = desactivado)
+PRECARGA_MINUTOS = float(os.environ.get("PRECARGA_MINUTOS", "") or 10)
 
 ZONA = timezone(timedelta(hours=-5))  # Colombia, sin horario de verano
 LOGIN_URL = f"{BASE_URL}/index.php?page=LoginPage"
@@ -367,14 +370,13 @@ def _bucle_autoping(url):
 # ---------------------------------------------------------------------------
 
 def bloques(fi, ff):
-    """Divide [fi, ff] por mes calendario. Así rangos distintos que se solapan
-    reutilizan los mismos bloques en caché (ej. todo septiembre)."""
-    res, a = [], fi
+    """Meses calendario completos que cubren [fi, ff]. Siempre se descarga y guarda el mes
+    entero, así cualquier día o rango dentro de un mes ya consultado sale de la caché."""
+    res, a = [], fi.replace(day=1)
     while a <= ff:
-        siguiente_mes = (a.replace(day=1) + timedelta(days=32)).replace(day=1)
-        b = min(siguiente_mes - timedelta(days=1), ff)
-        res.append((a, b))
-        a = b + timedelta(days=1)
+        siguiente_mes = (a + timedelta(days=32)).replace(day=1)
+        res.append((a, siguiente_mes - timedelta(days=1)))
+        a = siguiente_mes
     return res
 
 
@@ -406,9 +408,22 @@ class Repositorio:
                     time.sleep(2 ** intento)
         raise SilogtranError(f"Silogtran no respondió tras {REINTENTOS} intentos") from ultimo
 
+    def _guardar(self, a, b, datos):
+        momento = ahora()
+        self.cache[(a, b)] = (momento, datos)
+        while len(self.cache) > CACHE_MAX_BLOQUES:
+            del self.cache[min(self.cache, key=lambda k: self.cache[k][0])]
+        return momento
+
+    def refrescar(self, a, b):
+        """Descarga el bloque aunque siga vigente en caché (precarga del mes en curso)."""
+        with self.lock:
+            self._guardar(a, b, self._descargar(a, b))
+
     def obtener(self, fi, ff):
         filas, momentos = [], []
         desde_cache, desactualizado = True, False
+        desde, hasta = fi.isoformat(), ff.isoformat()
         for a, b in bloques(fi, ff):
             with self.lock:  # una descarga a la vez; peticiones iguales simultáneas esperan y usan la caché
                 entrada = self.cache.get((a, b))
@@ -418,19 +433,28 @@ class Repositorio:
                     desde_cache = False
                     try:
                         datos = self._descargar(a, b)
-                        momento = ahora()
-                        self.cache[(a, b)] = (momento, datos)
-                        while len(self.cache) > CACHE_MAX_BLOQUES:
-                            del self.cache[min(self.cache, key=lambda k: self.cache[k][0])]
+                        momento = self._guardar(a, b, datos)
                     except SilogtranError as e:
                         if not entrada or isinstance(e, EstructuraError):
                             raise
                         log.warning("Se entregan datos anteriores para %s a %s", a, b)
                         momento, datos = entrada
                         desactualizado = True
-            filas.extend(datos)
+            # El bloque es el mes completo: se recorta al rango pedido (mismo criterio de Silogtran)
+            filas.extend(f for f in datos if desde <= (f["liqman_fechacreacion"] or "") <= hasta)
             momentos.append(momento)
         return filas, min(momentos), desde_cache, desactualizado
+
+
+def _bucle_precarga(repo):
+    """Mantiene el mes en curso siempre en caché, para que las consultas recientes no esperen a Silogtran."""
+    while True:
+        a, b = bloques(ahora().date(), ahora().date())[0]
+        try:
+            repo.refrescar(a, b)
+        except Exception as e:
+            log.warning("Precarga falló: %s", type(e).__name__)
+        time.sleep(PRECARGA_MINUTOS * 60)
 
 
 # ---------------------------------------------------------------------------
@@ -601,6 +625,9 @@ def main():
     if AUTOPING_URL and AUTOPING_MINUTOS > 0:
         log.info("Autoping activo cada %s min", AUTOPING_MINUTOS)
         threading.Thread(target=_bucle_autoping, args=(AUTOPING_URL,), daemon=True).start()
+    if PRECARGA_MINUTOS > 0:
+        log.info("Precarga del mes en curso cada %s min", PRECARGA_MINUTOS)
+        threading.Thread(target=_bucle_precarga, args=(REPO,), daemon=True).start()
 
     log.info("API escuchando en http://%s:%s/v1/liquidaciones", HOST, PORT)
     ThreadingHTTPServer((HOST, PORT), Handler).serve_forever()

@@ -171,12 +171,15 @@ Todos tienen esta forma: `{ "error": { "codigo": "...", "mensaje": "..." } }`
 
 ## 7. Rendimiento y caché
 
-- Silogtran se consulta mes por mes y cada mes queda en caché:
-  - 15 minutos si el mes incluye alguno de los últimos 7 días.
-  - 6 horas si el mes es más antiguo.
-- Tiempos aproximados:
-  - Un mes: 4–5 s.
-  - Desde caché: menos de 0,1 s.
+- La API descarga de Silogtran **meses completos** y los guarda en caché. Cualquier día o rango
+  dentro de un mes ya consultado se responde desde la caché, recortado al rango pedido.
+- El **mes en curso se precarga** en segundo plano cada 10 minutos, así que siempre responde al instante.
+- Vigencia de la caché:
+  - 15 minutos para meses que incluyen alguno de los últimos 7 días.
+  - 6 horas para meses anteriores.
+- Tiempos medidos en Render:
+  - Mes no consultado antes: 3–5 s.
+  - Cualquier rango en caché: menos de 0,5 s.
 - Recomendado: timeout del cliente de 2 minutos.
 - Si Silogtran falla, la API reintenta 3 veces. Si sigue fallando y tiene datos previos guardados, los entrega con `desactualizado: true`.
 - Responde comprimido en gzip cuando el cliente lo acepta.
