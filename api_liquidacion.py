@@ -88,7 +88,7 @@ PRECARGA_MINUTOS = float(os.environ.get("PRECARGA_MINUTOS", "") or 10)
 # seguido: 30 min, 2 h, 8 h, 24 h), y nunca más de LOGIN_MAX_POR_HORA / LOGIN_MAX_POR_DIA logins.
 LOGIN_ESPERA_MINUTOS = _env_int("LOGIN_ESPERA_MINUTOS", 30)
 LOGIN_MAX_POR_HORA = _env_int("LOGIN_MAX_POR_HORA", 2)
-LOGIN_MAX_POR_DIA = _env_int("LOGIN_MAX_POR_DIA", 10)
+LOGIN_MAX_POR_DIA = _env_int("LOGIN_MAX_POR_DIA", 3)
 # Límite total de consultas por minuto sumando todos los clientes (no se puede eludir cambiando de IP)
 MAX_PETICIONES_MINUTO_TOTAL = _env_int("MAX_PETICIONES_MINUTO_TOTAL", 40)
 # Intentos con token inválido permitidos por minuto e IP

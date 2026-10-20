@@ -246,8 +246,8 @@ documentados en [.env.example](.env.example). `PORT` la asigna Render.
 - **Un solo login:** la API inicia sesión una vez y reutiliza la sesión hasta que Silogtran la cierre.
   Las consultas, la precarga y el keepalive nunca abren sesiones nuevas mientras la actual siga activa.
 - **Protección del usuario:** si un login falla, la API no vuelve a intentarlo hasta pasado un tiempo
-  que crece con cada fallo seguido: 30 min, 2 h, 8 h y luego 24 h. Como máximo hace 4 intentos fallidos al día.
-  Además, nunca hace más de **2 logins por hora ni 10 por día**. Mientras tanto responde
+  que crece con cada fallo seguido: 30 min, 2 h, 8 h y luego 24 h. Además, nunca hace más de
+  **3 logins en 24 horas** (contando los fallidos) ni 2 por hora. Con la sesión estable, normalmente hay 1 login al día. Mientras tanto responde
   `503 silogtran_sesion_en_pausa`, o datos en caché marcados `desactualizado`.
   `/health` muestra `login_en_pausa_hasta`, `logins_ultima_hora` y `logins_ultimas_24h`.
 - **Límites de consultas:** 20 por minuto por cliente y 40 por minuto en total; el límite total no se
