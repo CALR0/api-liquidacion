@@ -1,22 +1,22 @@
-FROM python:3.13-slim
+# Imagen oficial de Playwright: ya trae Chromium + todas sus dependencias de sistema,
+# y la versión coincide con playwright==1.49.0 de requirements.txt. Evita el --with-deps
+# que fallaba en Debian trixie por paquetes de fuentes inexistentes.
+FROM mcr.microsoft.com/playwright/python:v1.49.0-jammy
 
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
-# Los navegadores de Playwright se instalan en una ruta compartida para que el usuario 'app' los lea
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 WORKDIR /app
 
+# venv para evitar el bloqueo "externally managed environment" de Ubuntu al usar pip
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
 COPY requirements.txt .
-# Chromium + sus dependencias de sistema (apt) para resolver el desafío de AWS WAF.
-# --with-deps corre apt-get (requiere root; el build de Docker lo es hasta 'USER app').
-RUN pip install --no-cache-dir -r requirements.txt \
- && playwright install --with-deps chromium \
- && chmod -R a+rx /ms-playwright
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY api_liquidacion.py .
 
-# Usuario sin privilegios
-RUN useradd --create-home --uid 10001 app
-USER app
+# La imagen trae el usuario sin privilegios 'pwuser'; los navegadores en /ms-playwright son suyos
+USER pwuser
 
 EXPOSE 8000
 CMD ["python", "api_liquidacion.py"]
