@@ -254,8 +254,14 @@ def _campos_ocultos(html):
     return campos
 
 
-def _diagnostico_login(html, url):
+def _diagnostico_login(html, url, status=200):
     """Explica por qué Silogtran no dejó entrar, sin exponer credenciales."""
+    titulo = re.search(r"<title[^>]*>([\s\S]*?)</title>", html, re.I)
+    titulo = re.sub(r"\s+", " ", titulo.group(1)).strip()[:80] if titulo else "-"
+    detalle = f" [HTTP {status}, título '{titulo}', {len(html)} bytes]"
+    if status in (401, 403, 429) or re.search(r"access denied|forbidden|too many|cloudflare|captcha|"
+                                              r"bloquead|blocked|denegad", html, re.I):
+        return "Silogtran o su firewall está bloqueando la conexión desde el servidor de la API" + detalle
     m = re.search(r'id="ctl0_MainModule_campo"[^>]*>([\s\S]*?)</span>', html)
     mensaje = re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", m.group(1)))).strip() if m else ""
     if "BtnValida2FA" in html:
@@ -265,9 +271,12 @@ def _diagnostico_login(html, url):
     if mensaje:
         return f"Silogtran respondió: {mensaje[:200]}"
     if "ctl0$MainModule$Usuario" in html:
-        return "Silogtran rechazó el usuario o la clave (volvió al formulario de ingreso)"
+        return "Silogtran rechazó el usuario o la clave (volvió al formulario de ingreso)" + detalle
     pagina = parse_qs(urlparse(url).query).get("page", ["?"])[0]
-    return f"Ingresó pero no se pudo abrir el Informe General (Silogtran redirige a '{pagina}'): revise los permisos del usuario"
+    if pagina == "LoginPage":
+        return "Silogtran respondió algo inesperado al iniciar sesión" + detalle
+    return (f"Ingresó pero no se pudo abrir el Informe General (Silogtran redirige a '{pagina}'): "
+            "revise los permisos del usuario" + detalle)
 
 
 def _opciones(html, name):
@@ -311,7 +320,7 @@ class SilogtranClient:
         }
         r = self.session.post(LOGIN_URL, data=data, timeout=60)
         html = r.text
-        self._diag = (html, r.url)
+        self._diag = (html, r.url, r.status_code)
 
         # Paso 2: Silogtran pide elegir el centro de costo antes de entrar
         opciones = _opciones(html, "ctl0$MainModule$centrocosto")
@@ -329,12 +338,12 @@ class SilogtranClient:
                 "ctl0$MainModule$BtnContinuar": "Continuar",
             })
             r = self.session.post(LOGIN_URL, data=data, timeout=60)
-            self._diag = (r.text, r.url)
+            self._diag = (r.text, r.url, r.status_code)
 
     def _cargar_formulario(self):
         """Devuelve el HTML del informe o None si la sesión no es válida."""
         r = self.session.get(PAGE_URL, timeout=60)
-        self._ultima_pagina = (r.text, r.url)
+        self._ultima_pagina = (r.text, r.url, r.status_code)
         if "LoginPage" in r.url or _hidden(r.text, "ctl0$MainModule$factura_fechainicial") is None:
             return None
         return r.text
@@ -364,10 +373,10 @@ class SilogtranClient:
             if html is None:
                 # Si tras el login seguimos en LoginPage el motivo está en la respuesta del login;
                 # si no, Silogtran dejó entrar pero el informe redirige a otra página (permisos)
-                texto, url = self._ultima_pagina
-                if "LoginPage" in url:
-                    texto, url = self._diag
-                raise CredencialesError(_diagnostico_login(texto, url))
+                pagina = self._ultima_pagina
+                if "LoginPage" in pagina[1]:
+                    pagina = self._diag
+                raise CredencialesError(_diagnostico_login(*pagina))
         except Exception as e:
             self.fallos_login += 1
             espera = min(LOGIN_ESPERA_MINUTOS * 4 ** (self.fallos_login - 1), 1440)
