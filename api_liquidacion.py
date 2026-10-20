@@ -690,7 +690,7 @@ def main():
             log.warning("No se pudo iniciar sesión al arrancar: %s", type(e).__name__)
     # En segundo plano: el puerto abre de inmediato aunque Silogtran tarde en responder
     threading.Thread(target=_login_inicial, daemon=True).start()
-    if KEEPALIVE_MINUTOS > 0:
+    if KEEPALIVE_MINUTOS > 0 and PRECARGA_MINUTOS <= 0:  # la precarga ya mantiene viva la sesión
         threading.Thread(target=_bucle_keepalive, args=(CLIENT,), daemon=True).start()
     if AUTOPING_URL and AUTOPING_MINUTOS > 0:
         log.info("Autoping activo cada %s min", AUTOPING_MINUTOS)
