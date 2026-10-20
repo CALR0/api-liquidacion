@@ -83,6 +83,11 @@ AUTOPING_URL = (os.environ.get("AUTOPING_URL") or os.environ.get("RENDER_EXTERNA
 AUTOPING_MINUTOS = float(os.environ.get("AUTOPING_MINUTOS", "") or 10)
 # Cada cuántos minutos se refresca en segundo plano el mes en curso (0 = desactivado)
 PRECARGA_MINUTOS = float(os.environ.get("PRECARGA_MINUTOS", "") or 10)
+# Protección del usuario de Silogtran contra bloqueo por intentos de ingreso:
+# tras un login fallido no se vuelve a intentar hasta pasados LOGIN_ESPERA_MINUTOS (se duplica con
+# cada fallo seguido, hasta 4 h), y nunca se hacen más de LOGIN_MAX_POR_HORA logins por hora.
+LOGIN_ESPERA_MINUTOS = _env_int("LOGIN_ESPERA_MINUTOS", 15)
+LOGIN_MAX_POR_HORA = _env_int("LOGIN_MAX_POR_HORA", 3)
 
 ZONA = timezone(timedelta(hours=-5))  # Colombia, sin horario de verano
 LOGIN_URL = f"{BASE_URL}/index.php?page=LoginPage"
@@ -183,6 +188,14 @@ class EstructuraError(SilogtranError):
     """El informe de Silogtran cambió sus columnas."""
 
 
+class SesionEnPausa(SilogtranError):
+    """Inicio de sesión suspendido temporalmente para no bloquear el usuario de Silogtran."""
+
+    def __init__(self, hasta):
+        self.hasta = hasta
+        super().__init__(f"Inicio de sesión en Silogtran en pausa hasta {hasta.isoformat(timespec='seconds')}")
+
+
 def normalizar(filas_csv):
     """Convierte las filas del CSV al esquema fijo de la API."""
     if not filas_csv:
@@ -253,6 +266,9 @@ class SilogtranClient:
         self.session.headers["User-Agent"] = "Mozilla/5.0 (api-liquidacion)"
         self.lock = threading.Lock()  # PRADO maneja estado por sesión: una operación a la vez
         self.ultima_ok = None
+        self.fallos_login = 0
+        self.pausa_hasta = None   # mientras esté vigente no se intenta iniciar sesión
+        self.logins = deque()     # momentos de los últimos logins (límite por hora)
 
     def __repr__(self):
         return "SilogtranClient(<credenciales ocultas>)"
@@ -298,20 +314,62 @@ class SilogtranClient:
             return None
         return r.text
 
-    def _formulario_con_sesion(self):
-        html = self._cargar_formulario()
-        if html is None:
+    def _login_controlado(self):
+        """Único punto de entrada al login. Un solo intento a la vez (lo garantiza self.lock),
+        pausa creciente tras cada fallo y tope de logins por hora: así la API nunca bombardea
+        Silogtran con intentos aunque lleguen muchas consultas o la sesión se caiga en bucle."""
+        t = ahora()
+        if self.pausa_hasta and t < self.pausa_hasta:
+            raise SesionEnPausa(self.pausa_hasta)
+        while self.logins and t - self.logins[0] >= timedelta(hours=1):
+            self.logins.popleft()
+        if len(self.logins) >= LOGIN_MAX_POR_HORA:
+            self.pausa_hasta = self.logins[0] + timedelta(hours=1)
+            log.error("Se alcanzó el máximo de %s inicios de sesión por hora; la sesión se cae seguido "
+                      "(¿otra persona usa el mismo usuario?). Pausa hasta %s",
+                      LOGIN_MAX_POR_HORA, self.pausa_hasta.isoformat(timespec="seconds"))
+            raise SesionEnPausa(self.pausa_hasta)
+        self.logins.append(t)
+        try:
             self._login()
             html = self._cargar_formulario()
             if html is None:
-                raise CredencialesError("No se pudo iniciar sesión en Silogtran: revise usuario/clave")
-            log.info("Sesión iniciada")
+                raise CredencialesError("No se pudo iniciar sesión en Silogtran: revise usuario/clave "
+                                        "o si el usuario está inactivo")
+        except Exception as e:
+            self.fallos_login += 1
+            espera = min(LOGIN_ESPERA_MINUTOS * 2 ** (self.fallos_login - 1), 240)
+            self.pausa_hasta = t + timedelta(minutes=espera)
+            log.error("Inicio de sesión fallido (%s seguido(s)): %s. No se reintentará hasta %s",
+                      self.fallos_login, e if isinstance(e, CredencialesError) else type(e).__name__,
+                      self.pausa_hasta.isoformat(timespec="seconds"))
+            raise CredencialesError(str(e)) if not isinstance(e, CredencialesError) else e
+        self.fallos_login, self.pausa_hasta = 0, None
+        log.info("Sesión iniciada en Silogtran (%s login(s) en la última hora)", len(self.logins))
         return html
 
+    def _formulario_con_sesion(self):
+        """Reutiliza la sesión vigente; solo inicia sesión si Silogtran la dio por vencida."""
+        html = self._cargar_formulario()
+        return html if html is not None else self._login_controlado()
+
     def keepalive(self):
-        """Toca el formulario para que la sesión no venza por inactividad (y la renueva si venció)."""
+        """Toca el formulario para que la sesión no venza por inactividad. Nunca inicia sesión:
+        si la sesión ya no existe, la siguiente consulta (o la precarga) la abrirá de forma controlada."""
+        with self.lock:
+            if self._cargar_formulario() is None:
+                log.info("Keepalive: la sesión no está activa; se abrirá en la próxima consulta")
+
+    def iniciar(self):
         with self.lock:
             self._formulario_con_sesion()
+
+    def estado(self):
+        en_pausa = bool(self.pausa_hasta and ahora() < self.pausa_hasta)
+        return {
+            "login_en_pausa_hasta": self.pausa_hasta.isoformat(timespec="seconds") if en_pausa else None,
+            "logins_ultima_hora": sum(1 for x in self.logins if ahora() - x < timedelta(hours=1)),
+        }
 
     def consultar(self, fecha_inicial, fecha_final):
         """Genera el informe en CSV para el rango y devuelve las filas crudas."""
@@ -332,7 +390,10 @@ class SilogtranClient:
                 "ctl0$MainModule$grabar_uuid": _hidden(html, "ctl0$MainModule$grabar_uuid") or "",
                 "ctl0$MainModule$ctl3": "Generar",
             }
-            resp = self.session.post(PAGE_URL, data=data, timeout=TIMEOUT_SILOGTRAN_SEG).text
+            r = self.session.post(PAGE_URL, data=data, timeout=TIMEOUT_SILOGTRAN_SEG)
+            if "LoginPage" in r.url:  # la sesión se cayó en medio de la consulta: no es "sin datos"
+                raise SilogtranError("La sesión de Silogtran se cerró durante la consulta")
+            resp = r.text
             m = re.search(r"window\.open\('\.\./(reportes/[^']+)'\)", resp)
             if not m:
                 self.ultima_ok = ahora()
@@ -398,8 +459,8 @@ class Repositorio:
         for intento in range(1, REINTENTOS + 1):
             try:
                 return normalizar(self.client.consultar(a.isoformat(), b.isoformat()))
-            except (CredencialesError, EstructuraError):
-                raise
+            except (CredencialesError, EstructuraError, SesionEnPausa):
+                raise  # reintentar no lo arregla y solo sumaría intentos de login
             except (SilogtranError, requests.RequestException) as e:
                 ultimo = e
                 log.warning("Silogtran falló (intento %s/%s, %s a %s): %s",
@@ -488,11 +549,15 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "api-liquidacion"
     sys_version = ""
 
-    def log_message(self, fmt, *args):
+    def log_request(self, code="-", size="-"):
         # Solo la ruta (sin query string) para no dejar parámetros en los logs; /health no se registra
         if urlparse(self.path).path == "/health":
             return
-        log.info("%s %s %s", self.client_ip(), self.command, urlparse(self.path).path)
+        ms = int((time.monotonic() - getattr(self, "_t0", time.monotonic())) * 1000)
+        log.info("%s %s %s %s %sms", self.client_ip(), self.command, urlparse(self.path).path, code, ms)
+
+    def log_message(self, fmt, *args):
+        pass  # los errores de protocolo no se registran (podrían incluir la ruta con parámetros)
 
     def client_ip(self):
         # Detrás del proxy del hosting la IP real viene en X-Forwarded-For
@@ -523,12 +588,14 @@ class Handler(BaseHTTPRequestHandler):
         return esquema.lower() == "bearer" and hmac.compare_digest(token.strip().encode(), API_KEY.encode())
 
     def do_GET(self):
+        self._t0 = time.monotonic()
         url = urlparse(self.path)
         if url.path == "/health":
             return self._json(200, {
                 "ok": True,
                 "ultima_consulta_silogtran_ok": CLIENT.ultima_ok.isoformat() if CLIENT.ultima_ok else None,
                 "bloques_en_cache": len(REPO.cache),
+                **CLIENT.estado(),
             })
         if url.path not in ("/v1/liquidaciones", "/v1/esquema"):
             return self._error(404, "no_encontrado", "Rutas: /v1/liquidaciones, /v1/esquema, /health")
@@ -567,9 +634,13 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             filas, extraccion, desde_cache, desactualizado = REPO.obtener(fi, ff)
+        except SesionEnPausa as e:
+            espera = max(60, int((e.hasta - ahora()).total_seconds()))
+            return self._error(503, "silogtran_sesion_en_pausa",
+                               "El inicio de sesión en Silogtran está en pausa para proteger el usuario; "
+                               "intente más tarde", {"Retry-After": str(espera)})
         except CredencialesError as e:
-            log.error("%s", e)
-            return self._error(502, "silogtran_sesion", str(e))
+            return self._error(502, "silogtran_sesion", "No se pudo iniciar sesión en Silogtran")
         except EstructuraError as e:
             log.error("%s", e)
             return self._error(502, "silogtran_estructura", str(e))
@@ -614,10 +685,9 @@ def main():
     REPO = Repositorio(CLIENT)
     def _login_inicial():
         try:
-            CLIENT.keepalive()  # valida credenciales al arrancar
-            log.info("Sesión en Silogtran iniciada")
+            CLIENT.iniciar()  # un único login al arrancar (controlado)
         except Exception as e:
-            log.warning("No se pudo iniciar sesión al arrancar (%s); se reintentará en la primera consulta", e)
+            log.warning("No se pudo iniciar sesión al arrancar: %s", type(e).__name__)
     # En segundo plano: el puerto abre de inmediato aunque Silogtran tarde en responder
     threading.Thread(target=_login_inicial, daemon=True).start()
     if KEEPALIVE_MINUTOS > 0:

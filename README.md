@@ -166,6 +166,7 @@ Todos tienen esta forma: `{ "error": { "codigo": "...", "mensaje": "..." } }`
 | 404 | `no_encontrado` | Ruta inexistente |
 | 429 | `demasiadas_peticiones` | Más de 20 consultas por minuto desde la misma IP |
 | 502 | `silogtran_sesion` | No se pudo iniciar sesión en Silogtran |
+| 503 | `silogtran_sesion_en_pausa` | El login a Silogtran está en pausa tras un fallo, para no bloquear el usuario; reintentar según `Retry-After` |
 | 502 | `silogtran_estructura` | El informe de Silogtran cambió sus columnas |
 | 503 | `silogtran_no_disponible` | Silogtran no respondió; reintentar según el header `Retry-After` |
 
@@ -242,6 +243,12 @@ Los demás parámetros (caché, límites, reintentos, timeouts) tienen valores p
 documentados en [.env.example](.env.example). `PORT` la asigna Render.
 
 **Funcionamiento interno:**
+- **Un solo login:** la API inicia sesión una vez y reutiliza la sesión hasta que Silogtran la cierre.
+  Las consultas, la precarga y el keepalive nunca abren sesiones nuevas mientras la actual siga activa.
+- **Protección del usuario:** si un login falla, la API no vuelve a intentarlo durante 15 minutos.
+  La espera se duplica con cada fallo seguido, hasta 4 horas. Además, nunca hace más de 3 logins por hora.
+  Mientras tanto responde `503 silogtran_sesion_en_pausa`, o datos en caché marcados `desactualizado`.
+  `/health` muestra `login_en_pausa_hasta` y `logins_ultima_hora`.
 - La API inicia sesión en Silogtran, mantiene la sesión activa y la renueva sola si vence.
 - En el plan gratuito, Render apaga el servicio tras 15 minutos sin uso. Para evitarlo, la API se
   consulta a sí misma (`/health`) cada 10 minutos.
