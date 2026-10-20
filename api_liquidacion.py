@@ -84,10 +84,15 @@ AUTOPING_MINUTOS = float(os.environ.get("AUTOPING_MINUTOS", "") or 10)
 # Cada cuántos minutos se refresca en segundo plano el mes en curso (0 = desactivado)
 PRECARGA_MINUTOS = float(os.environ.get("PRECARGA_MINUTOS", "") or 10)
 # Protección del usuario de Silogtran contra bloqueo por intentos de ingreso:
-# tras un login fallido no se vuelve a intentar hasta pasados LOGIN_ESPERA_MINUTOS (se duplica con
-# cada fallo seguido, hasta 4 h), y nunca se hacen más de LOGIN_MAX_POR_HORA logins por hora.
-LOGIN_ESPERA_MINUTOS = _env_int("LOGIN_ESPERA_MINUTOS", 15)
-LOGIN_MAX_POR_HORA = _env_int("LOGIN_MAX_POR_HORA", 3)
+# tras un login fallido no se vuelve a intentar hasta pasados LOGIN_ESPERA_MINUTOS (x4 con cada fallo
+# seguido: 30 min, 2 h, 8 h, 24 h), y nunca más de LOGIN_MAX_POR_HORA / LOGIN_MAX_POR_DIA logins.
+LOGIN_ESPERA_MINUTOS = _env_int("LOGIN_ESPERA_MINUTOS", 30)
+LOGIN_MAX_POR_HORA = _env_int("LOGIN_MAX_POR_HORA", 2)
+LOGIN_MAX_POR_DIA = _env_int("LOGIN_MAX_POR_DIA", 10)
+# Límite total de consultas por minuto sumando todos los clientes (no se puede eludir cambiando de IP)
+MAX_PETICIONES_MINUTO_TOTAL = _env_int("MAX_PETICIONES_MINUTO_TOTAL", 40)
+# Intentos con token inválido permitidos por minuto e IP
+MAX_TOKEN_INVALIDO_MINUTO = _env_int("MAX_TOKEN_INVALIDO_MINUTO", 10)
 
 ZONA = timezone(timedelta(hours=-5))  # Colombia, sin horario de verano
 LOGIN_URL = f"{BASE_URL}/index.php?page=LoginPage"
@@ -316,19 +321,22 @@ class SilogtranClient:
 
     def _login_controlado(self):
         """Único punto de entrada al login. Un solo intento a la vez (lo garantiza self.lock),
-        pausa creciente tras cada fallo y tope de logins por hora: así la API nunca bombardea
+        pausa creciente tras cada fallo y topes por hora y por día: así la API nunca bombardea
         Silogtran con intentos aunque lleguen muchas consultas o la sesión se caiga en bucle."""
         t = ahora()
         if self.pausa_hasta and t < self.pausa_hasta:
             raise SesionEnPausa(self.pausa_hasta)
-        while self.logins and t - self.logins[0] >= timedelta(hours=1):
+        while self.logins and t - self.logins[0] >= timedelta(days=1):
             self.logins.popleft()
-        if len(self.logins) >= LOGIN_MAX_POR_HORA:
-            self.pausa_hasta = self.logins[0] + timedelta(hours=1)
-            log.error("Se alcanzó el máximo de %s inicios de sesión por hora; la sesión se cae seguido "
-                      "(¿otra persona usa el mismo usuario?). Pausa hasta %s",
-                      LOGIN_MAX_POR_HORA, self.pausa_hasta.isoformat(timespec="seconds"))
-            raise SesionEnPausa(self.pausa_hasta)
+        ultima_hora = [x for x in self.logins if t - x < timedelta(hours=1)]
+        for usados, tope, ventana, base in ((len(ultima_hora), LOGIN_MAX_POR_HORA, timedelta(hours=1), ultima_hora),
+                                            (len(self.logins), LOGIN_MAX_POR_DIA, timedelta(days=1), self.logins)):
+            if usados >= tope:
+                self.pausa_hasta = base[0] + ventana
+                log.error("Tope de %s inicios de sesión por %s alcanzado; la sesión se cae seguido "
+                          "(¿otra persona usa el mismo usuario?). Pausa hasta %s", tope,
+                          "hora" if ventana.days == 0 else "día", self.pausa_hasta.isoformat(timespec="seconds"))
+                raise SesionEnPausa(self.pausa_hasta)
         self.logins.append(t)
         try:
             self._login()
@@ -338,7 +346,7 @@ class SilogtranClient:
                                         "o si el usuario está inactivo")
         except Exception as e:
             self.fallos_login += 1
-            espera = min(LOGIN_ESPERA_MINUTOS * 2 ** (self.fallos_login - 1), 240)
+            espera = min(LOGIN_ESPERA_MINUTOS * 4 ** (self.fallos_login - 1), 1440)
             self.pausa_hasta = t + timedelta(minutes=espera)
             log.error("Inicio de sesión fallido (%s seguido(s)): %s. No se reintentará hasta %s",
                       self.fallos_login, e if isinstance(e, CredencialesError) else type(e).__name__,
@@ -369,6 +377,7 @@ class SilogtranClient:
         return {
             "login_en_pausa_hasta": self.pausa_hasta.isoformat(timespec="seconds") if en_pausa else None,
             "logins_ultima_hora": sum(1 for x in self.logins if ahora() - x < timedelta(hours=1)),
+            "logins_ultimas_24h": sum(1 for x in self.logins if ahora() - x < timedelta(days=1)),
         }
 
     def consultar(self, fecha_inicial, fecha_final):
@@ -542,7 +551,9 @@ class RateLimiter:
 
 CLIENT = None
 REPO = None
-LIMITER = RateLimiter(MAX_PETICIONES_MINUTO)
+LIMITER = RateLimiter(MAX_PETICIONES_MINUTO)               # por IP
+LIMITER_TOTAL = RateLimiter(MAX_PETICIONES_MINUTO_TOTAL)    # todos los clientes juntos
+LIMITER_TOKEN = RateLimiter(MAX_TOKEN_INVALIDO_MINUTO)      # tokens inválidos por IP
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -600,10 +611,16 @@ class Handler(BaseHTTPRequestHandler):
         if url.path not in ("/v1/liquidaciones", "/v1/esquema"):
             return self._error(404, "no_encontrado", "Rutas: /v1/liquidaciones, /v1/esquema, /health")
         if not self._autorizado():
+            if not LIMITER_TOKEN.permitir(self.client_ip()):
+                return self._error(429, "demasiadas_peticiones", "Demasiados intentos con token inválido",
+                                   {"Retry-After": "60"})
             return self._error(401, "no_autorizado", "Token inválido o ausente (Authorization: Bearer <API_KEY>)",
                                {"WWW-Authenticate": 'Bearer realm="api-liquidacion"'})
-        if not LIMITER.permitir(self.client_ip()):
-            return self._error(429, "demasiadas_peticiones", f"Máximo {MAX_PETICIONES_MINUTO} consultas por minuto")
+        # Doble límite: por IP (reparte entre clientes) y total (no se elude cambiando de IP)
+        if not LIMITER.permitir(self.client_ip()) or not LIMITER_TOTAL.permitir("total"):
+            return self._error(429, "demasiadas_peticiones",
+                               f"Máximo {MAX_PETICIONES_MINUTO} consultas por minuto por cliente y "
+                               f"{MAX_PETICIONES_MINUTO_TOTAL} en total", {"Retry-After": "60"})
         if url.path == "/v1/esquema":
             return self._json(200, ESQUEMA_JSON)
         self._liquidaciones(url)

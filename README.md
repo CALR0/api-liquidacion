@@ -164,7 +164,7 @@ Todos tienen esta forma: `{ "error": { "codigo": "...", "mensaje": "..." } }`
 | 400 | `parametro_invalido` | Parámetro no soportado |
 | 401 | `no_autorizado` | Token ausente o incorrecto |
 | 404 | `no_encontrado` | Ruta inexistente |
-| 429 | `demasiadas_peticiones` | Más de 20 consultas por minuto desde la misma IP |
+| 429 | `demasiadas_peticiones` | Más de 20 consultas por minuto por cliente, más de 40 por minuto en total, o más de 10 tokens inválidos por minuto |
 | 502 | `silogtran_sesion` | No se pudo iniciar sesión en Silogtran |
 | 503 | `silogtran_sesion_en_pausa` | El login a Silogtran está en pausa tras un fallo, para no bloquear el usuario; reintentar según `Retry-After` |
 | 502 | `silogtran_estructura` | El informe de Silogtran cambió sus columnas |
@@ -245,11 +245,13 @@ documentados en [.env.example](.env.example). `PORT` la asigna Render.
 **Funcionamiento interno:**
 - **Un solo login:** la API inicia sesión una vez y reutiliza la sesión hasta que Silogtran la cierre.
   Las consultas, la precarga y el keepalive nunca abren sesiones nuevas mientras la actual siga activa.
-- **Protección del usuario:** si un login falla, la API no vuelve a intentarlo durante 15 minutos.
-  La espera se duplica con cada fallo seguido, hasta 4 horas. Además, nunca hace más de 3 logins por hora.
-  Mientras tanto responde `503 silogtran_sesion_en_pausa`, o datos en caché marcados `desactualizado`.
-  `/health` muestra `login_en_pausa_hasta` y `logins_ultima_hora`.
-- La API inicia sesión en Silogtran, mantiene la sesión activa y la renueva sola si vence.
+- **Protección del usuario:** si un login falla, la API no vuelve a intentarlo hasta pasado un tiempo
+  que crece con cada fallo seguido: 30 min, 2 h, 8 h y luego 24 h. Como máximo hace 4 intentos fallidos al día.
+  Además, nunca hace más de **2 logins por hora ni 10 por día**. Mientras tanto responde
+  `503 silogtran_sesion_en_pausa`, o datos en caché marcados `desactualizado`.
+  `/health` muestra `login_en_pausa_hasta`, `logins_ultima_hora` y `logins_ultimas_24h`.
+- **Límites de consultas:** 20 por minuto por cliente y 40 por minuto en total; el límite total no se
+  puede eludir cambiando de IP. Además, se permiten como máximo 10 intentos con token inválido por minuto e IP.
 - En el plan gratuito, Render apaga el servicio tras 15 minutos sin uso. Para evitarlo, la API se
   consulta a sí misma (`/health`) cada 10 minutos.
 
