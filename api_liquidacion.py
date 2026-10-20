@@ -94,6 +94,16 @@ MAX_PETICIONES_MINUTO_TOTAL = _env_int("MAX_PETICIONES_MINUTO_TOTAL", 40)
 # Intentos con token inválido permitidos por minuto e IP
 MAX_TOKEN_INVALIDO_MINUTO = _env_int("MAX_TOKEN_INVALIDO_MINUTO", 10)
 
+# AWS WAF protege Silogtran con un "challenge" en JavaScript que requests no puede ejecutar.
+# Un Chromium headless (Playwright) lo resuelve como lo haría un navegador y entrega la cookie
+# aws-waf-token, que se copia a la sesión de requests. No elude la protección: la pasa igual que
+# una persona abriendo la página. WAF_NAVEGADOR=0 lo desactiva (vuelve al bloqueo con mensaje claro).
+WAF_NAVEGADOR = os.environ.get("WAF_NAVEGADOR", "1").strip().lower() not in ("0", "false", "no", "")
+WAF_ESPERA_SEG = _env_int("WAF_ESPERA_SEG", 30)
+NAVEGADOR_UA = os.environ.get("NAVEGADOR_UA", "").strip() or (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36")
+
 ZONA = timezone(timedelta(hours=-5))  # Colombia, sin horario de verano
 LOGIN_URL = f"{BASE_URL}/index.php?page=LoginPage"
 PAGE_URL = f"{BASE_URL}/index.php?page=Despacho.Liquidacionmanifiesto.InformeGeneral_111"
@@ -293,9 +303,10 @@ class SilogtranClient:
         self._usuario = usuario
         self._clave = clave
         self.session = requests.Session()
-        self.session.headers["User-Agent"] = "Mozilla/5.0 (api-liquidacion)"
+        self.session.headers["User-Agent"] = NAVEGADOR_UA
         self.lock = threading.Lock()  # PRADO maneja estado por sesión: una operación a la vez
         self.ultima_ok = None
+        self.ultimo_waf = None
         self.fallos_login = 0
         self.pausa_hasta = None   # mientras esté vigente no se intenta iniciar sesión
         self.logins = deque()     # momentos de los últimos logins (límite por hora)
@@ -303,10 +314,73 @@ class SilogtranClient:
     def __repr__(self):
         return "SilogtranClient(<credenciales ocultas>)"
 
+    def _fetch(self, metodo, url, **kwargs):
+        """Hace la petición a Silogtran y, si AWS WAF responde con un desafío, lo resuelve con el
+        navegador y reintenta una vez. Único punto por el que pasan todas las peticiones, para que
+        el firewall se maneje igual en login, keepalive y consulta."""
+        kwargs.setdefault("timeout", 60)
+        r = self.session.request(metodo, url, **kwargs)
+        if r.headers.get("x-amzn-waf-action") == "challenge":
+            self._resolver_waf()
+            r = self.session.request(metodo, url, **kwargs)
+        accion = r.headers.get("x-amzn-waf-action")
+        if accion:
+            raise SilogtranError(
+                f"El firewall de Silogtran (AWS WAF) sigue bloqueando tras el navegador "
+                f"(acción '{accion}', HTTP {r.status_code}). Revise WAF_NAVEGADOR o pida a "
+                "Colombia Software que autorice la IP del servidor")
+        return r
+
+    def _resolver_waf(self):
+        """Lanza un Chromium headless que resuelve el challenge de AWS WAF y copia la cookie
+        aws-waf-token a la sesión de requests. No toca la cookie de sesión de Silogtran (PRADO):
+        solo aporta el token del firewall, así una sesión ya iniciada no se pierde al renovarlo."""
+        if not WAF_NAVEGADOR:
+            raise SilogtranError("AWS WAF está bloqueando y la resolución por navegador está "
+                                 "desactivada (WAF_NAVEGADOR=0). Pida autorizar la IP del servidor")
+        try:
+            from playwright.sync_api import sync_playwright
+        except ImportError as e:
+            raise SilogtranError("Falta Playwright para pasar el desafío de AWS WAF "
+                                 "(pip install playwright && playwright install chromium)") from e
+        log.info("Resolviendo desafío de AWS WAF con navegador headless")
+        cookies = []
+        with sync_playwright() as pw:
+            navegador = pw.chromium.launch(headless=True, args=[
+                "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"])
+            try:
+                contexto = navegador.new_context(user_agent=NAVEGADOR_UA)
+                pagina = contexto.new_page()
+                try:
+                    pagina.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=WAF_ESPERA_SEG * 1000)
+                except Exception:
+                    pass  # aunque la navegación no "termine", el token puede quedar fijado; se revisa abajo
+                limite = time.monotonic() + WAF_ESPERA_SEG
+                while True:
+                    cookies = contexto.cookies()
+                    if any(c["name"] == "aws-waf-token" for c in cookies):
+                        break
+                    if time.monotonic() >= limite:
+                        raise SilogtranError(
+                            f"El navegador no obtuvo el token de AWS WAF en {WAF_ESPERA_SEG}s; "
+                            "el desafío pudo endurecerse (captcha) o falta tiempo (suba WAF_ESPERA_SEG)")
+                    pagina.wait_for_timeout(500)
+            finally:
+                navegador.close()
+        # Solo el token del firewall; la cookie de sesión de Silogtran se conserva intacta
+        for c in cookies:
+            if c["name"].lower().startswith("aws-waf"):
+                self.session.cookies.set(c["name"], c["value"])
+        self.ultimo_waf = ahora()
+        log.info("Token de AWS WAF obtenido")
+
     def _login(self):
         log.info("Iniciando sesión en Silogtran")
-        self.session.cookies.clear()
-        html = self.session.get(LOGIN_URL, timeout=60).text
+        # Limpiar la sesión PRADO anterior, pero conservar el token de AWS WAF para no relanzar el navegador
+        for c in list(self.session.cookies):
+            if not c.name.lower().startswith("aws-waf"):
+                self.session.cookies.clear(c.domain, c.path, c.name)
+        html = self._fetch("GET", LOGIN_URL).text
         data = {
             "PRADO_PAGESTATE": _hidden(html, "PRADO_PAGESTATE") or "",
             "PRADO_POSTBACK_TARGET": "ctl0$MainModule$BtnIngresar",
@@ -318,7 +392,7 @@ class SilogtranClient:
             "ctl0$MainModule$BtnIngresar": "Ingresar",
             "ctl0$MainModule$IDLockHidden_ctl0_MainModule_BtnIngresar": "true",
         }
-        r = self.session.post(LOGIN_URL, data=data, timeout=60)
+        r = self._fetch("POST", LOGIN_URL, data=data)
         html = r.text
         self._diag = (html, r.url, r.status_code)
 
@@ -337,12 +411,12 @@ class SilogtranClient:
                 "ctl0$MainModule$centrocosto": centro,
                 "ctl0$MainModule$BtnContinuar": "Continuar",
             })
-            r = self.session.post(LOGIN_URL, data=data, timeout=60)
+            r = self._fetch("POST", LOGIN_URL, data=data)
             self._diag = (r.text, r.url, r.status_code)
 
     def _cargar_formulario(self):
         """Devuelve el HTML del informe o None si la sesión no es válida."""
-        r = self.session.get(PAGE_URL, timeout=60)
+        r = self._fetch("GET", PAGE_URL)
         self._ultima_pagina = (r.text, r.url, r.status_code)
         if "LoginPage" in r.url or _hidden(r.text, "ctl0$MainModule$factura_fechainicial") is None:
             return None
@@ -411,6 +485,7 @@ class SilogtranClient:
             "login_en_pausa_hasta": self.pausa_hasta.isoformat(timespec="seconds") if en_pausa else None,
             "logins_ultima_hora": sum(1 for x in self.logins if ahora() - x < timedelta(hours=1)),
             "logins_ultimas_24h": sum(1 for x in self.logins if ahora() - x < timedelta(days=1)),
+            "ultimo_token_waf": self.ultimo_waf.isoformat(timespec="seconds") if self.ultimo_waf else None,
         }
 
     def consultar(self, fecha_inicial, fecha_final):
@@ -432,7 +507,7 @@ class SilogtranClient:
                 "ctl0$MainModule$grabar_uuid": _hidden(html, "ctl0$MainModule$grabar_uuid") or "",
                 "ctl0$MainModule$ctl3": "Generar",
             }
-            r = self.session.post(PAGE_URL, data=data, timeout=TIMEOUT_SILOGTRAN_SEG)
+            r = self._fetch("POST", PAGE_URL, data=data, timeout=TIMEOUT_SILOGTRAN_SEG)
             if "LoginPage" in r.url:  # la sesión se cayó en medio de la consulta: no es "sin datos"
                 raise SilogtranError("La sesión de Silogtran se cerró durante la consulta")
             resp = r.text
@@ -440,7 +515,7 @@ class SilogtranClient:
             if not m:
                 self.ultima_ok = ahora()
                 return []  # Silogtran no genera archivo cuando no hay datos
-            raw = self.session.get(f"{BASE_URL}/{m.group(1)}", timeout=TIMEOUT_SILOGTRAN_SEG).content
+            raw = self._fetch("GET", f"{BASE_URL}/{m.group(1)}", timeout=TIMEOUT_SILOGTRAN_SEG).content
             self.ultima_ok = ahora()
         try:
             text = raw.decode("utf-8-sig")
