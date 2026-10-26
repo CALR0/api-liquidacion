@@ -28,7 +28,7 @@ jobs:
       SILOGTRAN_USUARIO: ${{ secrets.SILOGTRAN_USUARIO }}
       SILOGTRAN_CLAVE: ${{ secrets.SILOGTRAN_CLAVE }}
       SILOGTRAN_CENTROCOSTO: ${{ secrets.SILOGTRAN_CENTROCOSTO }}
-      SILOGTRAN_URL: ${{ secrets.SILOGTRAN_URL }}
+      SILOGTRAN_URL: ${{ secrets.SILOGTRAN_URL || 'https://construproyec.colombiasoftware.net' }}
       SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
     steps:
       - uses: actions/checkout@v4
