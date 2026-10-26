@@ -2,3 +2,6 @@
 __pycache__/
 *.pyc
 *.log
+# Documento con credenciales para el equipo (NO versionar, el repo es público)
+conexion-qliksense-credenciales.pdf
+*.credenciales.pdf
