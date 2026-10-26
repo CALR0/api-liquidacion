@@ -13,7 +13,7 @@ prendido: un **job programado** (GitHub Actions) corre cada cierto tiempo, actua
 ## Qué hace
 
 ```
-Silogtran ──(job cada 20 min, GitHub Actions)──▶ Supabase (tabla liquidaciones) ◀──(lee)── QlikSense
+Silogtran ──(job 3 veces/día, GitHub Actions)──▶ Supabase (tabla liquidaciones) ◀──(lee)── QlikSense
 ```
 
 1. El job inicia sesión en Silogtran (login por formulario + centro de costo), pasa el **AWS WAF** con un
@@ -80,7 +80,8 @@ En el repo → **Settings → Secrets and variables → Actions**:
 
 ### 4. El cron queda corriendo solo
 
-El workflow **"Sync reciente"** se ejecuta cada 20 min (mes actual + anterior). No hay que hacer nada más.
+El workflow **"Sync reciente"** se ejecuta **3 veces al día** (12 a.m., 6 a.m. y 12 p.m. hora Colombia;
+en el `cron` van en UTC: 05:00, 11:00, 17:00) sobre el mes actual + anterior. No hay que hacer nada más.
 
 ---
 
@@ -113,11 +114,12 @@ Para cargas incrementales, filtra por `liqman_fechacreacion` o `fecha_extraccion
 
 ## Cada cuánto se actualiza (el cron)
 
-- GitHub Actions corre **"Sync reciente"** cada 20 min automáticamente (lo validas en la pestaña
-  **Actions**). La programación puede retrasarse unos minutos si GitHub está cargado.
-- Ajusta la frecuencia en la línea `cron:` de `.github/workflows/sync-reciente.yml`.
-- **Minutos:** en repos **públicos** Actions es ilimitado (este repo lo es). En privados son 2000 min/mes,
-  y ahí conviene bajar a cada hora (`0 * * * *`).
+- GitHub Actions corre **"Sync reciente"** automáticamente **3 veces al día**: 12 a.m., 6 a.m. y 12 p.m.
+  hora Colombia (en el `cron`, en UTC: `0 5,11,17 * * *`). Se valida en la pestaña **Actions**.
+- Ajusta el horario en la línea `cron:` de `.github/workflows/sync-reciente.yml`. Recuerda que GitHub
+  usa **UTC** (Colombia = UTC‑5) y que conviene **horas fijas**: los cron muy frecuentes (`*/20`) GitHub
+  los retrasa o los salta.
+- Puedes dispararlo cuando quieras con **Run workflow** (botón en la pestaña Actions).
 - El histórico casi no cambia: se re-sincroniza a mano con el workflow de backfill cuando haga falta.
 
 ---
@@ -134,7 +136,7 @@ requirements.txt     requests, playwright, psycopg2-binary
 .env.example         Variables de entorno (Silogtran, Supabase, WAF, modo sync)
 CONEXION_QLIKSENSE.md Ficha de conexión para el equipo de QlikSense
 .github/workflows/
-  sync-reciente.yml  cron cada 20 min (mes actual + anterior)
+  sync-reciente.yml  cron 3 veces/día (mes actual + anterior)
   sync-backfill.yml  manual, por rango de fechas (histórico)
 Dockerfile           Solo para correr el modo API REST en contenedor (anterior, opcional)
 ```

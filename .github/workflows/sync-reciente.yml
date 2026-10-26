@@ -4,7 +4,9 @@ name: Sync reciente (mes actual)
 # GitHub Actions es el "cron": solo consume minutos mientras corre (no hay servidor prendido).
 on:
   schedule:
-    - cron: "*/20 * * * *"   # cada 20 min (ajústalo; mínimo permitido: 5 min)
+    # GitHub usa UTC. Horario Colombia (UTC-5): 12 a.m., 6 a.m. y 12 p.m.
+    # => 05:00, 11:00 y 17:00 UTC. (Para "cada 6 h" real, añade 23 => 6 p.m. Colombia.)
+    - cron: "0 5,11,17 * * *"
   workflow_dispatch: {}
 
 concurrency:
