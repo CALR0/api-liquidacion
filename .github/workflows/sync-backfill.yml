@@ -1,0 +1,40 @@
+name: Sync por rango (backfill / histórico)
+
+# Se lanza A MANO desde Actions con un rango de fechas. Úsalo para la carga inicial del histórico
+# o para re-sincronizar meses pasados. Procesa por mes calendario (reemplaza cada mes).
+on:
+  workflow_dispatch:
+    inputs:
+      fecha_inicial:
+        description: "Fecha inicial yyyy-MM-dd (incluye su mes)"
+        required: true
+      fecha_final:
+        description: "Fecha final yyyy-MM-dd (vacío = hoy)"
+        required: false
+        default: ""
+
+concurrency:
+  group: sync-liquidacion
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      MODE: rango
+      SYNC_FECHA_INICIAL: ${{ inputs.fecha_inicial }}
+      SYNC_FECHA_FINAL: ${{ inputs.fecha_final }}
+      SILOGTRAN_USUARIO: ${{ secrets.SILOGTRAN_USUARIO }}
+      SILOGTRAN_CLAVE: ${{ secrets.SILOGTRAN_CLAVE }}
+      SILOGTRAN_CENTROCOSTO: ${{ secrets.SILOGTRAN_CENTROCOSTO }}
+      SILOGTRAN_URL: ${{ secrets.SILOGTRAN_URL }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements.txt
+      - run: python -m playwright install --with-deps chromium
+      - run: python sync.py

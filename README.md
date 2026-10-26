@@ -9,6 +9,13 @@ El consumidor decide cómo agrupar, filtrar o almacenar.
 
 **URL base:** `https://liqmanifiesto-construproyec.onrender.com`
 
+> **Hay dos formas de consumir esto:**
+> - **Modo SYNC a base de datos (recomendado):** un job programado (GitHub Actions) vuelca el informe a
+>   **Supabase** y QlikSense lee la tabla. No requiere un servicio prendido 24/7, así que evita el límite
+>   de horas de Render. Ver **la [sección 10](#10-modo-sync-a-base-de-datos-recomendado)** al final.
+> - **Modo API REST (secciones 1–9):** la API en Render que responde en vivo. Sigue funcionando; el sync
+>   reutiliza su mismo cliente de Silogtran y esquema.
+
 ---
 
 ## 1. Autenticación
@@ -267,5 +274,72 @@ Queda en `http://localhost:8000`.
 **Seguridad:**
 - La API es de solo lectura sobre Silogtran.
 - Funciona solo por HTTPS y con token Bearer obligatorio.
+
+---
+
+## 10. Modo SYNC a base de datos (recomendado)
+
+En vez de mantener la API prendida 24/7 (que consume las 750 horas gratis de Render), un **job
+programado** vuelca el informe a **Supabase (Postgres)** cada cierto tiempo, y **QlikSense lee la
+tabla**. No hay servicio permanente: el job solo corre mientras sincroniza.
+
+```
+Silogtran ──(job cada 20 min, GitHub Actions)──▶ Supabase (tabla liquidaciones) ◀──(lee)── QlikSense
+```
+
+Reutiliza el mismo código de Silogtran de este repo (`sync.py` importa de `api_liquidacion.py`). Archivos
+nuevos: `sync.py`, `schema.sql` y `.github/workflows/`.
+
+### Cómo funciona
+
+- El job inicia sesión en Silogtran, pasa el AWS WAF, genera el informe y escribe en Supabase. Misma
+  tabla de columnas (`schema.sql`), llave `id = liqman_codigo-manifiesto_codigo`.
+- Trabaja **por mes calendario** con **reemplazo del mes** (en una transacción borra las filas del mes e
+  inserta las frescas): refleja cambios **y** borrados, no solo altas.
+- **Cada cuánto:** el mes en curso y el anterior se refrescan cada 20 min (cron); el histórico se carga
+  una vez y se re-sincroniza a mano cuando haga falta.
+- **Protección del usuario:** si un login falla, guarda en `sync_estado` una pausa creciente (30 min → 2 h
+  → 8 h → 24 h) y las corridas siguientes se saltan, para no bloquear la cuenta.
+
+### Puesta en marcha
+
+1. **Supabase:** crea un proyecto (plan gratis). En **SQL Editor** ejecuta [`schema.sql`](schema.sql). En
+   **Project Settings → Database → Connection string → "Session pooler"** copia la cadena, pon la
+   contraseña y agrega `?sslmode=require`: esa es `SUPABASE_DB_URL`.
+2. **GitHub Secrets** (repo → Settings → Secrets and variables → Actions): `SILOGTRAN_USUARIO`,
+   `SILOGTRAN_CLAVE`, `SILOGTRAN_CENTROCOSTO`, `SUPABASE_DB_URL` (y opcional `SILOGTRAN_URL`).
+3. **Carga inicial:** pestaña **Actions → "Sync por rango (backfill / histórico)" → Run workflow**, con
+   `fecha_inicial` (ej. `2024-01-01`). Procesa mes por mes.
+4. **El cron ya corre solo:** el workflow **"Sync reciente"** cada 20 min (mes actual + anterior). Cambia
+   la frecuencia en `.github/workflows/sync-reciente.yml`.
+
+> GitHub Actions es gratis (ilimitado en repos públicos; 2000 min/mes en privados) y solo gasta minutos
+> **mientras corre** (~1–2 min). Es el "cron": no hace falta cron-job.org (que solo hace HTTP y no puede
+> correr el navegador del WAF).
+
+### Conectar QlikSense
+
+Con el **conector de PostgreSQL**: host `...pooler.supabase.com`, puerto `5432`, base `postgres`, usuario
+`postgres.<ref>`, SSL. Recomendado crear un usuario de solo lectura:
+
+```sql
+create role qlik_ro login password 'PON_UNA_CLAVE';
+grant usage on schema public to qlik_ro;
+grant select on public.liquidaciones to qlik_ro;
+```
+
+Carga completa (`select * from liquidaciones`) o incremental por `liqman_fechacreacion` / `fecha_extraccion`.
+Los códigos, léelos como texto para conservar ceros a la izquierda.
+
+### Probar en local
+
+```bash
+pip install -r requirements.txt
+python -m playwright install chromium
+copy .env.example .env     # completa SILOGTRAN_* y SUPABASE_DB_URL
+python sync.py             # MODE=reciente
+```
+
+---
 
 Todos los derechos reservados.

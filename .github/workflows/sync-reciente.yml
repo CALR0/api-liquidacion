@@ -1,0 +1,32 @@
+name: Sync reciente (mes actual)
+
+# Corre cada 20 minutos: refresca el mes anterior + el mes en curso en Supabase (sync.py, MODE=reciente).
+# GitHub Actions es el "cron": solo consume minutos mientras corre (no hay servidor prendido).
+on:
+  schedule:
+    - cron: "*/20 * * * *"   # cada 20 min (ajústalo; mínimo permitido: 5 min)
+  workflow_dispatch: {}
+
+concurrency:
+  group: sync-liquidacion     # evita corridas solapadas (dos logins a la vez)
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      MODE: reciente
+      SILOGTRAN_USUARIO: ${{ secrets.SILOGTRAN_USUARIO }}
+      SILOGTRAN_CLAVE: ${{ secrets.SILOGTRAN_CLAVE }}
+      SILOGTRAN_CENTROCOSTO: ${{ secrets.SILOGTRAN_CENTROCOSTO }}
+      SILOGTRAN_URL: ${{ secrets.SILOGTRAN_URL }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements.txt
+      - run: python -m playwright install --with-deps chromium
+      - run: python sync.py
