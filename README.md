@@ -112,15 +112,36 @@ Para cargas incrementales, filtra por `liqman_fechacreacion` o `fecha_extraccion
 
 ---
 
-## Cada cuánto se actualiza (el cron)
+El workflow **"Sync reciente"** es el que mantiene los datos al día: en cada corrida vuelve a sincronizar
+el **mes en curso + el mes anterior**. (El histórico casi no cambia; se recarga a mano con el backfill.)
 
-- GitHub Actions corre **"Sync reciente"** automáticamente **3 veces al día**: 12 a.m., 6 a.m. y 12 p.m.
-  hora Colombia (en el `cron`, en UTC: `0 5,11,17 * * *`). Se valida en la pestaña **Actions**.
-- Ajusta el horario en la línea `cron:` de `.github/workflows/sync-reciente.yml`. Recuerda que GitHub
-  usa **UTC** (Colombia = UTC‑5) y que conviene **horas fijas**: los cron muy frecuentes (`*/20`) GitHub
-  los retrasa o los salta.
-- Puedes dispararlo cuando quieras con **Run workflow** (botón en la pestaña Actions).
-- El histórico casi no cambia: se re-sincroniza a mano con el workflow de backfill cuando haga falta.
+### Disparo confiable: cron externo → GitHub (recomendado)
+
+El `schedule` nativo de GitHub es **best-effort**: se retrasa o se salta corridas (sobre todo las
+frecuentes). Para que corra **puntual**, un servicio de cron externo (p. ej. **cron-job.org**, gratis)
+llama a la API de GitHub y dispara el workflow (`workflow_dispatch`). El `schedule` nativo queda como
+respaldo.
+
+1. **Token:** GitHub → Settings → Developer settings → **Fine-grained tokens** → New token. Acceso solo
+   al repo `api-liquidacion`, permiso **Actions: Read and write**. Copia el token.
+2. **cron-job.org:** crea una cuenta y un *cronjob* con:
+   - **URL:** `https://api.github.com/repos/CALR0/api-liquidacion/actions/workflows/sync-reciente.yml/dispatches`
+   - **Método:** `POST`
+   - **Headers:**
+     - `Authorization: Bearer <TU_TOKEN>`
+     - `Accept: application/vnd.github+json`
+     - `X-GitHub-Api-Version: 2022-11-28`
+     - `User-Agent: cron-job`
+   - **Body:** `{"ref":"main"}`
+   - **Horario:** 12:00 a.m., 6:00 a.m. y 12:00 p.m. (cron-job.org permite elegir la zona horaria
+     Colombia directamente, sin convertir a UTC).
+   - Respuesta esperada de GitHub: **204** (sin cuerpo) = disparo aceptado.
+3. En la pestaña **Actions** verás la corrida casi de inmediato cada vez que cron-job.org dispare.
+
+Nota: el token es secreto; úsalo solo en cron-job.org. Si se filtra, revócalo y genera otro (al ser
+fine-grained y solo de Actions, el alcance es mínimo).
+
+También puedes dispararlo a mano con **Run workflow** en la pestaña Actions.
 
 ---
 
