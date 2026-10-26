@@ -9,12 +9,11 @@ El consumidor decide cómo agrupar, filtrar o almacenar.
 
 **URL base:** `https://liqmanifiesto-construproyec.onrender.com`
 
-> **Hay dos formas de consumir esto:**
-> - **Modo SYNC a base de datos (recomendado):** un job programado (GitHub Actions) vuelca el informe a
->   **Supabase** y QlikSense lee la tabla. No requiere un servicio prendido 24/7, así que evita el límite
->   de horas de Render. Ver **la [sección 10](#10-modo-sync-a-base-de-datos-recomendado)** al final.
-> - **Modo API REST (secciones 1–9):** la API en Render que responde en vivo. Sigue funcionando; el sync
->   reutiliza su mismo cliente de Silogtran y esquema.
+> **Estado actual / contexto:** el consumo se hace por el **modo SYNC a base de datos** (recomendado): un
+> job programado en **GitHub Actions** vuelca el informe a **Supabase (Postgres)** y **QlikSense lee la
+> tabla** directamente (sin API prendida 24/7, así se evita el límite de horas de Render). El **modo API
+> REST** (secciones 1–9) sigue en el repo como referencia y reutiliza el mismo cliente de Silogtran y el
+> mismo esquema; el modo SYNC está en la **[sección 10](#10-modo-sync-a-base-de-datos-recomendado)**.
 
 ---
 
@@ -317,19 +316,37 @@ nuevos: `sync.py`, `schema.sql` y `.github/workflows/`.
 > **mientras corre** (~1–2 min). Es el "cron": no hace falta cron-job.org (que solo hace HTTP y no puede
 > correr el navegador del WAF).
 
-### Conectar QlikSense
+### Conectar QlikSense (cómo se expone la data)
 
-Con el **conector de PostgreSQL**: host `...pooler.supabase.com`, puerto `5432`, base `postgres`, usuario
-`postgres.<ref>`, SSL. Recomendado crear un usuario de solo lectura:
+No hay que construir una API: **Supabase es la capa de exposición**. La forma recomendada es la
+**conexión directa a Postgres** con un usuario de solo lectura.
 
-```sql
-create role qlik_ro login password 'PON_UNA_CLAVE';
-grant usage on schema public to qlik_ro;
-grant select on public.liquidaciones to qlik_ro;
-```
+1. En Supabase → **SQL Editor**, crea el usuario de solo lectura (con RLS activo hace falta la política):
 
-Carga completa (`select * from liquidaciones`) o incremental por `liqman_fechacreacion` / `fecha_extraccion`.
-Los códigos, léelos como texto para conservar ceros a la izquierda.
+   ```sql
+   create role qlik_ro login password 'PON_UNA_CLAVE_FUERTE';
+   grant usage on schema public to qlik_ro;
+   grant select on public.liquidaciones to qlik_ro;
+   -- Solo si activaste Row Level Security en la tabla:
+   create policy qlik_lectura on public.liquidaciones for select to qlik_ro using (true);
+   ```
+
+2. Pásale al equipo de QlikSense los datos de conexión (conector **PostgreSQL** de Qlik):
+   - **Host/puerto:** los del **Session pooler** de Supabase (Connect → Session pooler): `...pooler.supabase.com`, puerto `5432`.
+   - **Base:** `postgres` · **SSL:** activado (`require`).
+   - **Usuario:** `qlik_ro.<ref>` (mismo formato `usuario.<project-ref>` del pooler) · **Clave:** la que pusiste.
+   - Carga completa (`select * from liquidaciones`) o incremental por `liqman_fechacreacion` /
+     `fecha_extraccion`. Los códigos y documentos, léelos como **texto** (conservan ceros a la izquierda).
+
+   Alternativa HTTP: la **API REST automática** de Supabase (`/rest/v1/liquidaciones`) con el conector REST
+   de Qlik y una key con política de lectura. Más simple el Postgres directo.
+
+### Coherencia de los datos
+
+La tabla refleja exactamente el informe de Silogtran. Columnas como `envio_correo` / `fecha_envio_correo`
+vienen **vacías cuando la liquidación aún no se ha enviado** (pendiente): eso es lo mismo que muestra
+Silogtran, no un dato perdido. `liqman_valortotal` y `saldo_final` traen el valor solo en una fila por
+liquidación (en las demás van en 0): sumar la columna da el total sin duplicar.
 
 ### Probar en local
 
