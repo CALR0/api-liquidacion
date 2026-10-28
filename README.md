@@ -80,8 +80,8 @@ En el repo → **Settings → Secrets and variables → Actions**:
 
 ### 4. El cron queda corriendo solo
 
-El workflow **"Sync reciente"** se ejecuta **2 veces al día** (6 a.m. y 6 p.m. hora Colombia; en el
-`cron` van en UTC: 11:00 y 23:00) sobre el mes actual + anterior. No hay que hacer nada más.
+El workflow **"Sync reciente"** se ejecuta **2 veces al día** (8 a.m. y 2 p.m. hora Colombia; en el
+`cron` van en UTC: 13:00 y 19:00) sobre el mes actual + anterior. No hay que hacer nada más.
 
 ---
 
@@ -133,8 +133,8 @@ respaldo.
      - `X-GitHub-Api-Version: 2022-11-28`
      - `User-Agent: cron-job`
    - **Body:** `{"ref":"main"}`
-   - **Horario:** 6:00 a.m. y 6:00 p.m. — crontab `0 6,18 * * *` con timezone **America/Bogota**
-     (o `0 11,23 * * *` si el job está en UTC).
+   - **Horario:** 8:00 a.m. y 2:00 p.m. — crontab `0 8,14 * * *` con timezone **America/Bogota**
+     (o `0 13,19 * * *` si el job está en UTC).
    - Respuesta esperada de GitHub: **204** (sin cuerpo) = disparo aceptado.
 3. En la pestaña **Actions** verás la corrida casi de inmediato cada vez que cron-job.org dispare.
 
