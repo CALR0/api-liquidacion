@@ -78,10 +78,11 @@ En el repo → **Settings → Secrets and variables → Actions**:
 **Actions → "Sync por rango (backfill / histórico)" → Run workflow**, con `fecha_inicial` (ej.
 `2024-01-01`) y `fecha_final` vacío (= hoy). Procesa mes por mes.
 
-### 4. El cron queda corriendo solo
+### 4. El disparo del sync
 
-El workflow **"Sync reciente"** se ejecuta **2 veces al día** (8 a.m. y 2 p.m. hora Colombia; en el
-`cron` van en UTC: 13:00 y 19:00) sobre el mes actual + anterior. No hay que hacer nada más.
+El workflow **"Sync reciente"** (mes en curso + mes anterior) se dispara **2 veces al día** (8 a.m. y
+2 p.m. Colombia) desde un **cron externo** (cron-job.org) que llama a `workflow_dispatch`. Se configura
+como se explica más abajo. No se usa el schedule nativo de GitHub (impreciso).
 
 ---
 
@@ -115,12 +116,11 @@ Para cargas incrementales, filtra por `liqman_fechacreacion` o `fecha_extraccion
 El workflow **"Sync reciente"** es el que mantiene los datos al día: en cada corrida vuelve a sincronizar
 el **mes en curso + el mes anterior**. (El histórico casi no cambia; se recarga a mano con el backfill.)
 
-### Disparo confiable: cron externo → GitHub (recomendado)
+### Disparo del sync: cron externo → GitHub
 
-El `schedule` nativo de GitHub es **best-effort**: se retrasa o se salta corridas (sobre todo las
-frecuentes). Para que corra **puntual**, un servicio de cron externo (p. ej. **cron-job.org**, gratis)
-llama a la API de GitHub y dispara el workflow (`workflow_dispatch`). El `schedule` nativo queda como
-respaldo.
+El disparo lo hace **exclusivamente** un servicio de cron externo (p. ej. **cron-job.org**, gratis) que
+llama a la API de GitHub y ejecuta el workflow (`workflow_dispatch`). No se usa el `schedule` nativo de
+GitHub porque es impreciso (se retrasa o se salta corridas).
 
 1. **Token:** GitHub → Settings → Developer settings → **Fine-grained tokens** → New token. Acceso solo
    al repo `api-liquidacion`, permiso **Actions: Read and write**. Copia el token.
@@ -157,7 +157,7 @@ requirements.txt     requests, playwright, psycopg2-binary
 .env.example         Variables de entorno (Silogtran, Supabase, WAF, modo sync)
 CONEXION_QLIKSENSE.md Ficha de conexión para el equipo de QlikSense
 .github/workflows/
-  sync-reciente.yml  cron 2 veces/día (mes actual + anterior)
+  sync-reciente.yml  solo workflow_dispatch (lo dispara el cron externo 2 veces/día)
   sync-backfill.yml  manual, por rango de fechas (histórico)
 Dockerfile           Solo para correr el modo API REST en contenedor (anterior, opcional)
 ```
