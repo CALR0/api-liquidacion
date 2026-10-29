@@ -18,7 +18,7 @@ async function gh(config, ruta, opciones = {}) {
   });
   if (!resp.ok) {
     const mensajes = {
-      401: "Token inválido o vencido. Revísalo en Opciones.",
+      401: "Token inválido o vencido. Revísalo en ⚙ Configuración.",
       403: "El token no tiene permiso Actions: Read and write sobre el repositorio.",
       404: "No se encontró el repositorio o el workflow corte.yml.",
     };

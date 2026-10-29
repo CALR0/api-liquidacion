@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const boton = $("cerrar");
-const botonUltimo = $("descargarUltimo");
+const botonDescargar = $("descargar");
 const CAMPOS = ["token", "supabaseUrl", "supabaseKey", "claveExport", "repo"];
 const esperar = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -30,42 +30,40 @@ $("guardar").addEventListener("click", async () => {
   setTimeout(() => verConfig(false), 700);
 });
 
+// Al abrir siempre se muestra el corte; si falta configurar, se avisa (la ⚙ está arriba)
 leerConfig().then((config) => {
-  if (!config.token) verConfig(true);   // primera vez: abre directo la configuración
+  if (!config.token || !config.supabaseUrl || !config.supabaseKey || !config.claveExport) {
+    mostrar($("estado"), "Falta configurar la extensión: pulsa ⚙ arriba a la derecha.", "error");
+  }
 });
 
 // --- Descarga del Excel -------------------------------------------------------
-function ofrecerUltimo(cod) {
-  if (!cod) return;
-  botonUltimo.textContent = `⬇ Descargar corte ${cod} (Excel)`;
-  botonUltimo.dataset.cod = cod;
-  botonUltimo.hidden = false;
+// Un solo botón: baja el corte recién procesado o, si no hay uno en esta sesión, el último en Supabase.
+function rotularDescarga(cod) {
+  botonDescargar.dataset.cod = cod || "";
+  botonDescargar.textContent = cod ? `⬇ Descargar corte ${cod} (Excel)` : "⬇ Descargar último corte (Excel)";
 }
-chrome.storage.local.get("ultimoCorte").then(({ ultimoCorte }) => ofrecerUltimo(ultimoCorte));
 
-async function descargar(cod) {
+botonDescargar.addEventListener("click", async () => {
   const estado = $("estadoDescarga");
-  mostrar(estado, `Preparando corte ${cod}…`);
+  botonDescargar.disabled = true;
+  mostrar(estado, "Consultando el corte en Supabase…");
   try {
-    const n = await descargarCorte(await leerConfig(), cod);
-    mostrar(estado, `✅ liquidaciones_silogtran_${cod}.xlsx (${n} filas)`, "ok");
+    const r = await descargarCorte(await leerConfig(), botonDescargar.dataset.cod || null);
+    rotularDescarga(r.cod);
+    mostrar(estado, `✅ liquidaciones_silogtran_${r.cod}.xlsx (${r.filas} filas)`, "ok");
   } catch (e) {
     mostrar(estado, `❌ ${e.message}`, "error");
+  } finally {
+    botonDescargar.disabled = false;
   }
-}
-
-botonUltimo.addEventListener("click", () => descargar(botonUltimo.dataset.cod));
-$("descargar").addEventListener("click", () => {
-  const cod = $("numero").value.trim();
-  if (!/^\d+$/.test(cod)) return mostrar($("estadoDescarga"), "Escribe el número del corte.", "error");
-  descargar(cod);
 });
 
 // --- Cerrar corte -------------------------------------------------------------
 boton.addEventListener("click", async () => {
   const estado = $("estado");
   const config = await leerConfig();
-  if (!config.token) return verConfig(true);
+  if (!config.token) return mostrar(estado, "Falta el token de GitHub: pulsa ⚙ arriba a la derecha.", "error");
   if (!confirm("¿Cerrar el corte con las liquidaciones nuevas?")) return;
 
   boton.disabled = true;
@@ -96,10 +94,7 @@ boton.addEventListener("click", async () => {
       const resultado = await leerResultado(config, corrida.id);
       mostrar(estado, `✅ ${resultado || "Corte terminado"}`, "ok");
       const cod = (resultado || "").match(/^Corte (\d+)/)?.[1];
-      if (cod) {
-        await chrome.storage.local.set({ ultimoCorte: cod });
-        ofrecerUltimo(cod);
-      }
+      if (cod) rotularDescarga(cod);   // la descarga apunta al corte recién creado
     } else {
       mostrar(estado, "❌ El corte falló. Avisa al administrador.", "error");
     }

@@ -151,14 +151,16 @@ Todo ocurre en la ventanita de la extensión, en la misma ventana del navegador:
 
 Uso: clic en el ícono → **▶ Cerrar corte** → confirmar. En 1–3 minutos muestra, por ejemplo,
 *"✅ Corte 15: 12 liquidaciones (30 filas)"*. Hay que dejar abierta la ventanita mientras procesa; si se
-cierra, el corte igual se completa y se puede descargar luego por su número.
+cierra, el corte igual se completa y al abrirla de nuevo se descarga con el mismo botón (último corte).
 
-**Descargar el corte:** al terminar aparece **"⬇ Descargar corte N (Excel)"**, y abajo se puede bajar
-cualquier corte por su número. Descarga `liquidaciones_silogtran_N.xlsx`: una hoja con las columnas del
+**Descargar el corte:** la ventanita tiene un solo botón de descarga, sin campos para escribir. Tras
+procesar, apunta al corte recién creado (**"⬇ Descargar corte N (Excel)"**); si no se ha procesado uno en
+esa sesión, baja el **último corte** que haya en Supabase. Descarga `liquidaciones_silogtran_N.xlsx`: una hoja con las columnas del
 informe más `cod_corte` y `fecha_corte` (sin `id` ni `fecha_extraccion`), encabezado con color, fila fija,
 filtros, montos con separador de miles y códigos como texto (conservan ceros a la izquierda). Los datos
 salen de Supabase con la función `exportar_corte`: con la clave pública sola no se puede leer la tabla,
-y con la clave de exportación solo se obtiene un corte a la vez. Nada pasa por GitHub (el repo es público).
+y con la clave de exportación solo se obtiene un corte a la vez.
+Si ya habías ejecutado `exportar_corte.sql`, vuelve a ejecutarlo (con tu clave) para actualizar la función. Nada pasa por GitHub (el repo es público).
 
 El token y las claves se guardan solo en ese Chrome (no en el código; el repo es público). Si se pierde o filtra,
 revócalo en GitHub y genera otro.

@@ -1,8 +1,8 @@
 -- Exportación de un corte para la extensión de Chrome (ejecutar una vez en Supabase → SQL Editor).
 --
 -- La extensión llama a la función exportar_corte(cod_corte, clave) con la clave pública del proyecto.
--- La función solo devuelve las filas de ESE corte y solo si la clave de exportación es correcta:
--- con la clave pública sola no se puede leer la tabla liquidaciones.
+-- La función solo devuelve las filas de UN corte (el indicado o, si no se indica, el último) y solo si
+-- la clave de exportación es correcta: con la clave pública sola no se puede leer la tabla liquidaciones.
 
 -- 0) Con la clave pública nadie debe leer la tabla directo: RLS activo en liquidaciones.
 --    (El job escribe como dueño de la tabla y no se ve afectado; a QlikSense se le garantiza su política.)
@@ -31,7 +31,8 @@ values ('clave_exportacion', 'REEMPLACE_POR_UNA_CLAVE_LARGA')
 on conflict (clave) do update set valor = excluded.valor;
 
 -- 3) Función de exportación
-create or replace function public.exportar_corte(p_cod_corte int, p_clave text)
+drop function if exists public.exportar_corte(int, text);
+create function public.exportar_corte(p_cod_corte int, p_clave text)
 returns setof public.liquidaciones
 language plpgsql
 security definer
@@ -44,7 +45,7 @@ begin
   end if;
   return query
     select * from liquidaciones
-    where cod_corte = p_cod_corte
+    where cod_corte = coalesce(p_cod_corte, (select max(cod_corte) from liquidaciones))
     order by liqman_codigo, manifiesto_codigo;
 end;
 $$;

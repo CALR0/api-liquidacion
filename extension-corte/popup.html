@@ -17,10 +17,6 @@
     button.verde { background: #1a7f37; margin-top: 10px; }
     .estado { margin-top: 8px; min-height: 16px; line-height: 1.4; }
     .ok { color: #1a7f37; } .error { color: #cf222e; }
-    h2 { font-size: 12px; margin: 16px 0 6px; color: #59636e; text-transform: uppercase; letter-spacing: .03em; }
-    .fila { display: flex; gap: 6px; }
-    .fila input { flex: 1; min-width: 0; }
-    .fila button { width: auto; padding: 7px 12px; font-size: 13px; }
     input { width: 100%; box-sizing: border-box; padding: 7px 8px; font: inherit;
             border: 1px solid #d1d9e0; border-radius: 6px; }
     label { display: block; margin: 10px 0 3px; font-weight: 600; }
@@ -37,13 +33,7 @@
   <main id="vistaPrincipal">
     <button id="cerrar">▶ Cerrar corte</button>
     <div id="estado" class="estado"></div>
-    <button id="descargarUltimo" class="verde" hidden></button>
-
-    <h2>Descargar un corte</h2>
-    <div class="fila">
-      <input id="numero" type="number" min="1" placeholder="N.º de corte">
-      <button id="descargar">⬇ Excel</button>
-    </div>
+    <button id="descargar" class="verde">⬇ Descargar último corte (Excel)</button>
     <div id="estadoDescarga" class="estado"></div>
   </main>
 

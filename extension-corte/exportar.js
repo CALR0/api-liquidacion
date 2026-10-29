@@ -8,13 +8,14 @@ function fechaColombia(iso) {
 
 async function traerCorte(config, codCorte) {
   if (!config.supabaseUrl || !config.supabaseKey || !config.claveExport) {
-    throw new Error("Falta configurar Supabase y la clave de exportación en Opciones.");
+    throw new Error("Falta configurar Supabase y la clave de exportación en ⚙ Configuración.");
   }
   const url = `${config.supabaseUrl.replace(/\/+$/, "")}/rest/v1/rpc/exportar_corte`;
   const resp = await fetch(url, {
     method: "POST",
     headers: { apikey: config.supabaseKey, "Content-Type": "application/json" },
-    body: JSON.stringify({ p_cod_corte: Number(codCorte), p_clave: config.claveExport }),
+    // Sin número, Supabase devuelve el último corte
+    body: JSON.stringify({ p_cod_corte: codCorte ? Number(codCorte) : null, p_clave: config.claveExport }),
   });
   if (!resp.ok) {
     const texto = await resp.text();
@@ -25,9 +26,11 @@ async function traerCorte(config, codCorte) {
   return resp.json();
 }
 
+// Devuelve { cod, filas } del corte descargado (el número sale de los datos de Supabase)
 async function descargarCorte(config, codCorte) {
   const filas = await traerCorte(config, codCorte);
-  if (!filas.length) throw new Error(`El corte ${codCorte} no tiene liquidaciones.`);
+  if (!filas.length) throw new Error("Todavía no hay cortes para descargar.");
+  codCorte = filas[0].cod_corte;
   const columnas = Object.keys(filas[0]).filter((c) => !OMITIR.has(c));
   // Montos con separador de miles; cod_corte es un código, va como texto
   const numericas = new Set(columnas.filter((c) => c !== "cod_corte" && filas.some((f) => typeof f[c] === "number")));
@@ -42,5 +45,5 @@ async function descargarCorte(config, codCorte) {
   enlace.click();
   enlace.remove();
   setTimeout(() => URL.revokeObjectURL(enlace.href), 10000);
-  return filas.length;
+  return { cod: codCorte, filas: filas.length };
 }
