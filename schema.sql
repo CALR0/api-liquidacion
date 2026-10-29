@@ -56,12 +56,17 @@ create table if not exists public.liquidaciones (
   estatus_sap                                             text,
   envio_correo                                            text,
   fecha_envio_correo                                      text,
-  fecha_extraccion                                        timestamptz not null default now()
+  fecha_extraccion                                        timestamptz not null default now(),
+  -- Corte de liquidación: lo asigna SOLO el botón "Cerrar corte" (workflow corte.yml).
+  -- El sync nunca lo modifica ni borra filas que lo tengan.
+  cod_corte                                               int,
+  fecha_corte                                             timestamptz
 );
 
 create index if not exists idx_liq_fechacreacion on public.liquidaciones (liqman_fechacreacion);
 create index if not exists idx_liq_manifiesto     on public.liquidaciones (manifiesto_codigo);
 create index if not exists idx_liq_estado_sap     on public.liquidaciones (estatus_sap);
+create index if not exists idx_liq_cod_corte      on public.liquidaciones (cod_corte);
 
 -- Estado del sync: freno de login para no bloquear el usuario de Silogtran.
 create table if not exists public.sync_estado (
@@ -69,4 +74,13 @@ create table if not exists public.sync_estado (
   fallos          int not null default 0,
   bloqueado_hasta timestamptz,
   actualizado     timestamptz not null default now()
+);
+
+-- Registro de cada corte (numeración y auditoría). cod_corte arranca en CORTE_INICIAL.
+create table if not exists public.cortes (
+  cod_corte          int primary key,
+  fecha_corte        timestamptz not null default now(),
+  liquidaciones      int not null,       -- cuántas liquidaciones (liqman_codigo) tomó
+  filas              int not null,       -- cuántas filas (manifiestos)
+  origen             text                -- quién/qué lo disparó (ej. extension-chrome)
 );

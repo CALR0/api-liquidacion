@@ -18,9 +18,12 @@ Silogtran ──(job 3 veces/día, GitHub Actions)──▶ Supabase (tabla liqu
 
 1. El job inicia sesión en Silogtran (login por formulario + centro de costo), pasa el **AWS WAF** con un
    Chromium headless, genera el informe en CSV y lo escribe en Supabase.
-2. Trabaja **por mes calendario** con **reemplazo del mes**: en una transacción borra las filas de ese mes
-   e inserta las frescas, así quedan reflejados cambios **y** borrados (no solo altas).
-3. QlikSense se conecta **directo** a Postgres (usuario de solo lectura) y consulta la tabla. No hay que
+2. Trabaja **por mes calendario**: en una transacción **inserta o actualiza** cada fila por `id` y borra
+   las que ya no vienen en el informe, **salvo las que tienen corte** (esas nunca se borran).
+   `cod_corte` y `fecha_corte` nunca los modifica el sync.
+3. **Cortes de liquidación:** la persona de liquidaciones pulsa **"Cerrar corte"** (extensión de Chrome) y
+   las liquidaciones nuevas quedan marcadas con el siguiente `cod_corte`. Ver [Cortes](#cortes-de-liquidación).
+4. QlikSense se conecta **directo** a Postgres (usuario de solo lectura) y consulta la tabla. No hay que
    construir ni mantener ninguna API.
 
 ---
@@ -40,6 +43,9 @@ Reglas importantes (para que coincida con Silogtran):
 - **`envio_correo` / `fecha_envio_correo`** están **vacíos cuando la liquidación aún no se envió**
   (pendiente): es lo mismo que muestra Silogtran, no es un dato perdido.
 - `fecha_extraccion`: cuándo se actualizó cada fila (útil para cargas incrementales).
+- **`cod_corte` / `fecha_corte`**: corte al que pertenece la liquidación y cuándo se cerró. Vacíos en las
+  liquidaciones anteriores a los cortes o aún no incluidas en uno. Una vez asignados **no cambian nunca**,
+  aunque la liquidación se anule (solo cambia `estado_liquidacion`).
 
 Columnas (orden del informe): `liqman_codigo`, `liqman_fechacreacion`, `transferencia_codigo`,
 `comegr_codigo`, `vale_codigo`, `banco_nombre`, `beneficiario(_documento)`, `poseedor(_documento)`,
@@ -47,7 +53,8 @@ Columnas (orden del informe): `liqman_codigo`, `liqman_fechacreacion`, `transfer
 tres bloques de anticipos (`anticipo_*`, `segundo_anticipo_*`, `tercer_anticipo_*`), `valor_total_anticipos`,
 valores de la liquidación, cartera, `liqman_valortotal`, `saldo_final`, `liqman_observacion`,
 `liquidacion_centro_costo`, `usuario_creacion`, `estado_liquidacion`, `estatus_sap`, `envio_correo`,
-`fecha_envio_correo`. La lista exacta con tipos: `schema.sql`.
+`fecha_envio_correo`, y al final `fecha_extraccion`, `cod_corte`, `fecha_corte`. La lista exacta con
+tipos: `schema.sql`.
 
 ---
 
@@ -56,7 +63,8 @@ valores de la liquidación, cartera, `liqman_valortotal`, `saldo_final`, `liqman
 ### 1. Supabase
 
 1. Crea un proyecto en [supabase.com](https://supabase.com) (plan gratis) y guarda la **Database Password**.
-2. **SQL Editor** → ejecuta [`schema.sql`](schema.sql) (crea `liquidaciones` y `sync_estado`). Si te avisa
+2. **SQL Editor** → ejecuta [`schema.sql`](schema.sql) (crea `liquidaciones`, `cortes` y `sync_estado`).
+   Si la base ya existía, ejecuta en cambio [`migracion_cortes.sql`](migracion_cortes.sql). Si te avisa
    de RLS, actívalo (es lo correcto; el job escribe como admin y no se ve afectado).
 3. **Project Settings → Database → Connect → "Session pooler"**: copia la cadena, pon la contraseña y
    agrega `?sslmode=require`. Esa es tu `SUPABASE_DB_URL` (formato `postgres.<ref>` por el pooler, IPv4).
@@ -73,6 +81,13 @@ En el repo → **Settings → Secrets and variables → Actions**:
 | `SUPABASE_DB_URL` | la cadena del paso 1 |
 | `SILOGTRAN_URL` | opcional (por defecto construproyec) |
 
+Y en la pestaña **Variables** (no son secretos) para los cortes:
+
+| Variable | Valor |
+|---|---|
+| `CORTE_INICIAL` | número del primer corte (ej. `1`) |
+| `CORTES_DESDE` | fecha `yyyy-MM-dd` desde la que cuentan los cortes (las liquidaciones anteriores quedan sin corte) |
+
 ### 3. Carga inicial del histórico (una vez)
 
 **Actions → "Sync por rango (backfill / histórico)" → Run workflow**, con `fecha_inicial` (ej.
@@ -83,6 +98,54 @@ En el repo → **Settings → Secrets and variables → Actions**:
 El workflow **"Sync reciente"** (mes en curso + mes anterior) se dispara **3 veces al día** (6 a.m.,
 2 p.m. y 6 p.m. Colombia) desde un **cron externo** (cron-job.org) que llama a `workflow_dispatch`. Se configura
 como se explica más abajo. No se usa el schedule nativo de GitHub (impreciso).
+
+---
+
+## Cortes de liquidación
+
+La persona de liquidaciones trabaja por **cortes**: hace un grupo de liquidaciones en Silogtran y, al
+terminar, pulsa **"▶ Cerrar corte"** en la extensión de Chrome. Las liquidaciones nuevas quedan marcadas
+con un `cod_corte` que se autoincrementa en cada corte.
+
+```
+8–10 a.m. liquida → play 10:00 → corte N   (las de 8–10)
+10–12     liquida → play 12:15 → corte N+1 (solo las nuevas)
+6 a.m. / 2 p.m. / 6 p.m. → cron normal: actualiza datos, NUNCA asigna ni cambia cortes
+```
+
+Cómo funciona (workflow **"Cerrar corte de liquidación"**, `corte.yml`, `MODE=corte`):
+
+1. Sincroniza mes anterior + mes en curso (igual que el cron) para traer lo último de Silogtran.
+2. Toma las filas **sin corte** con `liqman_fechacreacion >= CORTES_DESDE` y les asigna el siguiente número:
+   `max(último corte + 1, CORTE_INICIAL)`. Así nunca se repite un número; subir `CORTE_INICIAL` hace saltar
+   la numeración.
+3. Si no hay liquidaciones nuevas **no crea corte** ni gasta número.
+4. Registra el corte en la tabla `cortes` (número, fecha, cuántas liquidaciones y filas, quién lo disparó)
+   y deja el resultado en la corrida de Actions (lo muestra la extensión).
+
+Garantías:
+- El corte es **por liquidación**: todos sus manifiestos llevan el mismo; un manifiesto agregado después
+  **hereda** el corte de su liquidación.
+- `cod_corte` **nunca cambia ni se borra**: el sync solo actualiza los demás campos (estado, montos, SAP…)
+  y no borra filas con corte.
+- Comparte la fila (`concurrency`) con los crons: si coincide con uno, espera a que termine.
+
+### Extensión de Chrome (`extension-corte/`)
+
+Instalación (una vez, en el equipo de la persona de liquidaciones):
+
+1. **Token:** GitHub → Settings → Developer settings → **Fine-grained tokens** → New token, solo el repo
+   `api-liquidacion`, permiso **Actions: Read and write**.
+2. Chrome → `chrome://extensions` → activar **Modo de desarrollador** → **Cargar descomprimida** → elegir
+   la carpeta `extension-corte`.
+3. Clic derecho en el ícono de la extensión → **Opciones**: pegar el token y su nombre → **Guardar**.
+
+Uso: clic en el ícono → **▶ Cerrar corte** → confirmar. En 1–3 minutos muestra, por ejemplo,
+*"✅ Corte 15: 12 liquidaciones (30 filas)"*. Hay que dejar abierta la ventanita mientras procesa; si se
+cierra, el corte igual se completa (se ve en la pestaña Actions).
+
+El token se guarda solo en ese Chrome (no en el código; el repo es público). Si se pierde o filtra,
+revócalo en GitHub y genera otro.
 
 ---
 
@@ -151,7 +214,9 @@ También puedes dispararlo a mano con **Run workflow** en la pestaña Actions.
 sync.py              Job de sincronización: rango por modo → Silogtran → Supabase (reemplaza cada mes)
 api_liquidacion.py   Módulo reutilizado por el job: cliente de Silogtran (login+WAF+informe), esquema,
                      normalización. También puede correr como API REST local (modo anterior, opcional).
-schema.sql           DDL de Supabase (tabla liquidaciones + sync_estado)
+schema.sql           DDL de Supabase (liquidaciones + cortes + sync_estado)
+migracion_cortes.sql Agrega cod_corte/fecha_corte y la tabla cortes a una base que ya existía
+extension-corte/     Extensión de Chrome con el botón "Cerrar corte"
 esquema / normalizar Dentro de api_liquidacion.py: columnas, tipos y limpieza del CSV
 requirements.txt     requests, playwright, psycopg2-binary
 .env.example         Variables de entorno (Silogtran, Supabase, WAF, modo sync)
@@ -159,6 +224,7 @@ CONEXION_QLIKSENSE.md Ficha de conexión para el equipo de QlikSense
 .github/workflows/
   sync-reciente.yml  solo workflow_dispatch (lo dispara el cron externo 3 veces/día)
   sync-backfill.yml  manual, por rango de fechas (histórico)
+  corte.yml          lo dispara el botón "Cerrar corte" (asigna cod_corte a las liquidaciones nuevas)
 Dockerfile           Solo para correr el modo API REST en contenedor (anterior, opcional)
 ```
 

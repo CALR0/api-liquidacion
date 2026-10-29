@@ -57,6 +57,10 @@ SELECT * FROM public.liquidaciones;
     demás filas de esa liquidación van en `0`): sumar la columna da el total **sin duplicar**.
   - `envio_correo` / `fecha_envio_correo` están **vacíos cuando la liquidación aún no se ha enviado**
     (es lo mismo que muestra Silogtran, no es un dato faltante).
+- **`cod_corte`** (número) y **`fecha_corte`**: corte de liquidación al que pertenece cada liquidación.
+  Sirven para agrupar las liquidaciones por cortes. Están vacíos en las anteriores a los cortes o en las
+  que aún no se han incluido en uno. Una vez asignado, **el `cod_corte` no cambia nunca**, aunque la
+  liquidación se anule (en ese caso solo cambia `estado_liquidacion`).
 - Filtrar por fecha con **`liqman_fechacreacion`** (`yyyy-MM-dd`).
 - Para **cargas incrementales**: usar `fecha_extraccion` (cuándo se actualizó cada fila) o
   `liqman_fechacreacion`.
@@ -66,6 +70,9 @@ Ejemplos:
 ```sql
 -- Todo
 SELECT * FROM public.liquidaciones;
+
+-- Las liquidaciones de un corte
+SELECT * FROM public.liquidaciones WHERE cod_corte = 15;
 
 -- Un rango de fechas
 SELECT * FROM public.liquidaciones

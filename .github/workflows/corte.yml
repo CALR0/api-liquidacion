@@ -1,0 +1,43 @@
+name: Cerrar corte de liquidación
+
+# Lo dispara la persona de liquidaciones con el botón "Cerrar corte" (extensión de Chrome) vía
+# workflow_dispatch. Sincroniza mes anterior + mes en curso y asigna el siguiente cod_corte a las
+# liquidaciones nuevas sin corte (sync.py, MODE=corte). Los crons normales nunca asignan cortes.
+#
+# Variables (Settings → Secrets and variables → Actions → pestaña Variables):
+#   CORTE_INICIAL  número del primer corte (luego +1 por cada corte con liquidaciones nuevas)
+#   CORTES_DESDE   yyyy-MM-dd: solo entran a un corte las liquidaciones creadas desde esa fecha
+on:
+  workflow_dispatch:
+    inputs:
+      origen:
+        description: "Quién dispara el corte (queda en la tabla cortes)"
+        required: false
+        default: "manual"
+
+concurrency:
+  group: sync-liquidacion     # misma fila que los crons: nunca corren a la vez
+  cancel-in-progress: false
+
+jobs:
+  corte:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      MODE: corte
+      CORTE_INICIAL: ${{ vars.CORTE_INICIAL }}
+      CORTES_DESDE: ${{ vars.CORTES_DESDE }}
+      CORTE_ORIGEN: ${{ inputs.origen }}
+      SILOGTRAN_USUARIO: ${{ secrets.SILOGTRAN_USUARIO }}
+      SILOGTRAN_CLAVE: ${{ secrets.SILOGTRAN_CLAVE }}
+      SILOGTRAN_CENTROCOSTO: ${{ secrets.SILOGTRAN_CENTROCOSTO }}
+      SILOGTRAN_URL: ${{ secrets.SILOGTRAN_URL || 'https://construproyec.colombiasoftware.net' }}
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -r requirements.txt
+      - run: python -m playwright install --with-deps chromium
+      - run: python sync.py

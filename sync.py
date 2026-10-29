@@ -5,12 +5,15 @@ tiempo (cron de GitHub Actions), vuelca el informe en una tabla de Supabase y te
 otro BI) lee esa tabla en vez de llamar a la API en vivo.
 
 Importa de api_liquidacion el cliente de Silogtran, la normalización y el esquema (no duplica nada).
-Por cada mes del rango hace "reemplazo del mes" en una transacción (borra las filas del mes e inserta
-las frescas), así quedan reflejados cambios y borrados.
+Por cada mes del rango, en una transacción: inserta o actualiza cada fila por id (todas las columnas
+menos cod_corte/fecha_corte) y borra las filas del mes que ya no vienen en el informe, salvo las que
+tienen corte (esas nunca se borran ni pierden su código).
 
 Modos (variable de entorno MODE o 1er argumento):
   reciente  -> mes anterior + mes en curso (para el cron frecuente)  [por defecto]
   rango     -> usa SYNC_FECHA_INICIAL / SYNC_FECHA_FINAL (backfill histórico o refresco amplio)
+  corte     -> igual que "reciente" y además cierra un corte: asigna el siguiente cod_corte a las
+               liquidaciones nuevas sin corte (creadas desde CORTES_DESDE). Lo dispara el botón.
 
 Requiere SUPABASE_DB_URL (cadena del pooler de Supabase en modo sesión). Las credenciales de Silogtran
 y el WAF se configuran igual que para la API (ver .env.example).
@@ -29,8 +32,13 @@ from api_liquidacion import (COLUMNAS, CredencialesError, EstructuraError, Silog
 log = logging.getLogger("liquidacion-sync")
 
 COLUMNAS_TABLA = ["id"] + COLUMNAS + ["fecha_extraccion"]
+# Columnas que el sync refresca en cada corrida (cod_corte y fecha_corte no están: solo las asigna el corte)
+COLUMNAS_ACTUALIZABLES = [c for c in COLUMNAS_TABLA if c != "id"]
 DB_URL = os.environ.get("SUPABASE_DB_URL", "")
 LOGIN_BACKOFF_MIN = int(os.environ.get("LOGIN_BACKOFF_MIN", "") or 30)
+CORTE_INICIAL = int(os.environ.get("CORTE_INICIAL", "") or 1)
+CORTES_DESDE = os.environ.get("CORTES_DESDE", "")      # yyyy-MM-dd: solo entran liquidaciones desde aquí
+CORTE_ORIGEN = os.environ.get("CORTE_ORIGEN", "") or "manual"
 ZONA = timezone(timedelta(hours=-5))  # Colombia
 
 
@@ -50,6 +58,8 @@ def meses(fi, ff):
 
 def rango_por_modo():
     modo = (os.environ.get("MODE") or (sys.argv[1] if len(sys.argv) > 1 else "") or "reciente").lower()
+    if modo not in ("reciente", "rango", "corte"):
+        raise SystemExit(f"MODE desconocido: {modo} (use reciente, rango o corte)")
     hoy = datetime.now(ZONA).date()
     if modo == "rango":
         fi = os.environ.get("SYNC_FECHA_INICIAL", "")
@@ -59,7 +69,7 @@ def rango_por_modo():
         return modo, date.fromisoformat(fi), date.fromisoformat(ff)
     primero_mes = hoy.replace(day=1)
     mes_anterior = (primero_mes - timedelta(days=1)).replace(day=1)
-    return "reciente", mes_anterior, hoy
+    return modo, mes_anterior, hoy
 
 
 # --- base de datos ---------------------------------------------------------
@@ -102,16 +112,71 @@ def marcar_login_fallo(conn):
     log.error("Login fallido (%s seguido(s)); en pausa hasta %s", fallos, hasta.isoformat())
 
 
-def reemplazar_mes(conn, mes_ini, mes_fin, filas, extraccion):
+def actualizar_mes(conn, mes_ini, mes_fin, filas, extraccion):
+    """Inserta/actualiza el mes sin tocar nunca cod_corte ni fecha_corte, en una sola transacción."""
     with conn.cursor() as cur:
-        cur.execute("DELETE FROM liquidaciones WHERE liqman_fechacreacion BETWEEN %s AND %s",
-                    (mes_ini, mes_fin))
         if filas:
             valores = [tuple((extraccion if c == "fecha_extraccion" else f.get(c)) for c in COLUMNAS_TABLA)
                        for f in filas]
             cols = ", ".join(COLUMNAS_TABLA)
-            execute_values(cur, f"INSERT INTO liquidaciones ({cols}) VALUES %s", valores)
+            sets = ", ".join(f"{c} = EXCLUDED.{c}" for c in COLUMNAS_ACTUALIZABLES)
+            execute_values(cur, f"INSERT INTO liquidaciones ({cols}) VALUES %s "
+                                f"ON CONFLICT (id) DO UPDATE SET {sets}", valores)
+            # Filas que ya no vienen en el informe: se borran solo si no tienen corte
+            cur.execute("""DELETE FROM liquidaciones
+                           WHERE liqman_fechacreacion BETWEEN %s AND %s
+                             AND cod_corte IS NULL AND NOT (id = ANY(%s))""",
+                        (mes_ini, mes_fin, [f["id"] for f in filas]))
+        else:
+            # Informe vacío: si la base sí tiene datos de ese mes, se asume falla de Silogtran y no se borra
+            cur.execute("SELECT count(*) FROM liquidaciones WHERE liqman_fechacreacion BETWEEN %s AND %s",
+                        (mes_ini, mes_fin))
+            if cur.fetchone()[0]:
+                log.warning("Silogtran devolvió el mes %s vacío pero la base tiene datos; no se borra nada",
+                            mes_ini.strftime("%Y-%m"))
+        # Un manifiesto nuevo de una liquidación que ya tiene corte hereda ese corte
+        cur.execute("""UPDATE liquidaciones l SET cod_corte = c.cod_corte, fecha_corte = c.fecha_corte
+                       FROM (SELECT DISTINCT ON (liqman_codigo) liqman_codigo, cod_corte, fecha_corte
+                             FROM liquidaciones WHERE cod_corte IS NOT NULL
+                             ORDER BY liqman_codigo, cod_corte) c
+                       WHERE l.liqman_codigo = c.liqman_codigo AND l.cod_corte IS NULL
+                         AND l.liqman_fechacreacion BETWEEN %s AND %s""", (mes_ini, mes_fin))
     conn.commit()
+
+
+def cerrar_corte(conn):
+    """Asigna el siguiente cod_corte a las liquidaciones sin corte creadas desde CORTES_DESDE.
+    Devuelve (cod_corte, liquidaciones, filas) o None si no había nada nuevo (no gasta número)."""
+    if not CORTES_DESDE:
+        raise SystemExit("MODE=corte requiere CORTES_DESDE (yyyy-MM-dd): fecha desde la que cuentan los cortes")
+    desde = date.fromisoformat(CORTES_DESDE)
+    with conn.cursor() as cur:
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext('corte_liquidacion'))")  # un corte a la vez
+        cur.execute("SELECT coalesce(max(cod_corte), 0) FROM cortes")
+        siguiente = max(cur.fetchone()[0] + 1, CORTE_INICIAL)
+        cur.execute("""UPDATE liquidaciones SET cod_corte = %s, fecha_corte = now()
+                       WHERE cod_corte IS NULL AND liqman_fechacreacion >= %s
+                       RETURNING liqman_codigo""", (siguiente, desde))
+        tomadas = [r[0] for r in cur.fetchall()]
+        if not tomadas:
+            conn.rollback()
+            return None
+        cur.execute("INSERT INTO cortes(cod_corte, fecha_corte, liquidaciones, filas, origen) "
+                    "VALUES (%s, now(), %s, %s, %s)",
+                    (siguiente, len(set(tomadas)), len(tomadas), CORTE_ORIGEN))
+    conn.commit()
+    return siguiente, len(set(tomadas)), len(tomadas)
+
+
+def resumen_github(texto):
+    """Deja el resultado en la corrida de GitHub Actions: en el resumen y como anotación "Corte",
+    que es lo que lee la extensión de Chrome para mostrarle el número a la persona."""
+    ruta = os.environ.get("GITHUB_STEP_SUMMARY")
+    if ruta:
+        with open(ruta, "a", encoding="utf-8") as f:
+            f.write(f"### {texto}\n")
+    if os.environ.get("GITHUB_ACTIONS"):
+        print(f"::notice title=Corte::{texto}", flush=True)
 
 
 # --- main ------------------------------------------------------------------
@@ -122,10 +187,14 @@ def main():
     modo, fi, ff = rango_por_modo()
     if ff < fi:
         raise SystemExit("La fecha final es menor que la inicial")
+    if modo == "corte" and not CORTES_DESDE:
+        raise SystemExit("MODE=corte requiere CORTES_DESDE (yyyy-MM-dd)")
 
     conn = conectar()
     try:
         if freno_activo(conn):
+            if modo == "corte":
+                raise SystemExit("Login a Silogtran en pausa por un fallo previo; el corte no se pudo cerrar")
             return  # salir 0: protección del usuario, no es error
         cliente = SilogtranClient(USUARIO, CLAVE)
         extraccion = datetime.now(timezone.utc)
@@ -133,7 +202,7 @@ def main():
         try:
             for mes_ini, mes_fin in bloques:
                 filas = normalizar(cliente.consultar(mes_ini.isoformat(), mes_fin.isoformat()))
-                reemplazar_mes(conn, mes_ini, mes_fin, filas, extraccion)
+                actualizar_mes(conn, mes_ini, mes_fin, filas, extraccion)
                 total += len(filas)
                 log.info("Mes %s: %s filas", mes_ini.strftime("%Y-%m"), len(filas))
             marcar_login_ok(conn)
@@ -146,6 +215,14 @@ def main():
         except Exception as e:
             # transitorio (red/Silogtran/sesión): no toca el freno de login; el próximo cron reintenta
             raise SystemExit(f"Fallo en la consulta a Silogtran: {type(e).__name__}: {e}")
+
+        if modo == "corte":
+            # Solo se cierra el corte si el sync de arriba terminó bien (datos al día)
+            res = cerrar_corte(conn)
+            texto = (f"Corte {res[0]}: {res[1]} liquidaciones ({res[2]} filas)" if res
+                     else "Sin liquidaciones nuevas: no se creó corte")
+            log.info("CORTE -> %s", texto)
+            resumen_github(texto)
     finally:
         conn.close()
 

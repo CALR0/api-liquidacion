@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Cerrar corte de liquidación",
+  "version": "1.0.0",
+  "description": "Dispara el corte de liquidaciones (Silogtran → Supabase) con un clic.",
+  "action": {
+    "default_title": "Cerrar corte de liquidación",
+    "default_popup": "popup.html"
+  },
+  "options_page": "options.html",
+  "permissions": ["storage"],
+  "host_permissions": ["https://api.github.com/*"]
+}
