@@ -1,10 +1,10 @@
 name: Sync reciente (mes actual)
 
-# Corre cada 20 minutos: refresca el mes anterior + el mes en curso en Supabase (sync.py, MODE=reciente).
+# Corre 3 veces al día: refresca el mes anterior + el mes en curso en Supabase (sync.py, MODE=reciente).
 # GitHub Actions es el "cron": solo consume minutos mientras corre (no hay servidor prendido).
 on:
   # El disparo lo hace EXCLUSIVAMENTE un cron externo (cron-job.org) llamando a workflow_dispatch
-  # (8 a.m. y 2 p.m. Colombia; ver README). No se usa el schedule nativo de GitHub por impreciso.
+  # (6 a.m., 2 p.m. y 6 p.m. Colombia: 0 6,14,18 * * * America/Bogota; ver README). No se usa el schedule nativo de GitHub por impreciso.
   workflow_dispatch: {}
 
 concurrency:

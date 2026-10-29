@@ -13,7 +13,7 @@ prendido: un **job programado** (GitHub Actions) corre cada cierto tiempo, actua
 ## Qué hace
 
 ```
-Silogtran ──(job 2 veces/día, GitHub Actions)──▶ Supabase (tabla liquidaciones) ◀──(lee)── QlikSense
+Silogtran ──(job 3 veces/día, GitHub Actions)──▶ Supabase (tabla liquidaciones) ◀──(lee)── QlikSense
 ```
 
 1. El job inicia sesión en Silogtran (login por formulario + centro de costo), pasa el **AWS WAF** con un
@@ -80,8 +80,8 @@ En el repo → **Settings → Secrets and variables → Actions**:
 
 ### 4. El disparo del sync
 
-El workflow **"Sync reciente"** (mes en curso + mes anterior) se dispara **2 veces al día** (8 a.m. y
-2 p.m. Colombia) desde un **cron externo** (cron-job.org) que llama a `workflow_dispatch`. Se configura
+El workflow **"Sync reciente"** (mes en curso + mes anterior) se dispara **3 veces al día** (6 a.m.,
+2 p.m. y 6 p.m. Colombia) desde un **cron externo** (cron-job.org) que llama a `workflow_dispatch`. Se configura
 como se explica más abajo. No se usa el schedule nativo de GitHub (impreciso).
 
 ---
@@ -133,8 +133,8 @@ GitHub porque es impreciso (se retrasa o se salta corridas).
      - `X-GitHub-Api-Version: 2022-11-28`
      - `User-Agent: cron-job`
    - **Body:** `{"ref":"main"}`
-   - **Horario:** 8:00 a.m. y 2:00 p.m. — crontab `0 8,14 * * *` con timezone **America/Bogota**
-     (o `0 13,19 * * *` si el job está en UTC).
+   - **Horario:** 6:00 a.m., 2:00 p.m. y 6:00 p.m. — crontab `0 6,14,18 * * *` con timezone
+     **America/Bogota** (o `0 11,19,23 * * *` si el job está en UTC).
    - Respuesta esperada de GitHub: **204** (sin cuerpo) = disparo aceptado.
 3. En la pestaña **Actions** verás la corrida casi de inmediato cada vez que cron-job.org dispare.
 
@@ -157,7 +157,7 @@ requirements.txt     requests, playwright, psycopg2-binary
 .env.example         Variables de entorno (Silogtran, Supabase, WAF, modo sync)
 CONEXION_QLIKSENSE.md Ficha de conexión para el equipo de QlikSense
 .github/workflows/
-  sync-reciente.yml  solo workflow_dispatch (lo dispara el cron externo 2 veces/día)
+  sync-reciente.yml  solo workflow_dispatch (lo dispara el cron externo 3 veces/día)
   sync-backfill.yml  manual, por rango de fechas (histórico)
 Dockerfile           Solo para correr el modo API REST en contenedor (anterior, opcional)
 ```

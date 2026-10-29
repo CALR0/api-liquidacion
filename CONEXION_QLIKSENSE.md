@@ -6,7 +6,8 @@ Documento para el equipo que integra en QlikSense. Es **solo lectura**: no se pu
 
 Una base de datos **PostgreSQL** (alojada en Supabase) con la tabla **`liquidaciones`**, que contiene el
 *Informe General de Liquidación de Manifiesto* de Silogtran. **Una fila por manifiesto.** Los datos se
-**actualizan solos cada hora** (un proceso los sincroniza desde Silogtran).
+**actualizan solos 3 veces al día: 6:00 a.m., 2:00 p.m. y 6:00 p.m.** (hora Colombia). Un proceso los
+sincroniza desde Silogtran y tarda unos minutos en terminar.
 
 No hay API que llamar: se consulta **directo** con el conector de PostgreSQL de QlikSense.
 
@@ -73,7 +74,8 @@ WHERE liqman_fechacreacion BETWEEN '2026-01-01' AND '2026-01-31';
 
 ## Actualización y uso razonable (límites)
 
-- Los datos se **refrescan solos ~cada hora**; recargar en QlikSense más seguido que eso no trae nada
+- Los datos se **refrescan solos a las 6 a.m., 2 p.m. y 6 p.m.**; programen la recarga de QlikSense unos
+  minutos después de esas horas (por ejemplo, 6:30 a.m., 2:30 p.m. y 6:30 p.m.). Recargar más seguido no trae nada
   nuevo.
 - Conexión de **solo lectura**: no se puede escribir ni borrar.
 - Evitar *full reloads* muy frecuentes (varias veces por minuto). Lo ideal: unas pocas recargas al día,
