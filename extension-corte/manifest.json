@@ -9,5 +9,5 @@
   },
   "options_page": "options.html",
   "permissions": ["storage"],
-  "host_permissions": ["https://api.github.com/*"]
+  "host_permissions": ["https://api.github.com/*", "https://*.supabase.co/*"]
 }

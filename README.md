@@ -138,13 +138,27 @@ Instalación (una vez, en el equipo de la persona de liquidaciones):
    `api-liquidacion`, permiso **Actions: Read and write**.
 2. Chrome → `chrome://extensions` → activar **Modo de desarrollador** → **Cargar descomprimida** → elegir
    la carpeta `extension-corte`.
-3. Clic derecho en el ícono de la extensión → **Opciones**: pegar el token → **Guardar**.
+3. **Supabase → SQL Editor:** ejecutar [`exportar_corte.sql`](exportar_corte.sql) reemplazando
+   `REEMPLACE_POR_UNA_CLAVE_LARGA` por una clave larga y aleatoria (la **clave de exportación**). Crea la
+   función que entrega solo las filas de un corte y activa RLS en `liquidaciones` (sin afectar a QlikSense).
+4. Clic derecho en el ícono de la extensión → **Opciones** → **Guardar** con:
+   - **Token de GitHub** (solo el `github_pat_…`, sin `Bearer`).
+   - **URL del proyecto** de Supabase (`https://xxxx.supabase.co`) y su **clave pública** (anon / publishable;
+     nunca la `service_role` / secret).
+   - La **clave de exportación** del paso 3.
 
 Uso: clic en el ícono → **▶ Cerrar corte** → confirmar. En 1–3 minutos muestra, por ejemplo,
 *"✅ Corte 15: 12 liquidaciones (30 filas)"*. Hay que dejar abierta la ventanita mientras procesa; si se
 cierra, el corte igual se completa (se ve en la pestaña Actions).
 
-El token se guarda solo en ese Chrome (no en el código; el repo es público). Si se pierde o filtra,
+**Descargar el corte:** al terminar aparece **"⬇ Descargar corte N (Excel)"**, y abajo se puede bajar
+cualquier corte por su número. Descarga `liquidaciones_silogtran_N.xlsx`: una hoja con las columnas del
+informe más `cod_corte` y `fecha_corte` (sin `id` ni `fecha_extraccion`), encabezado con color, fila fija,
+filtros, montos con separador de miles y códigos como texto (conservan ceros a la izquierda). Los datos
+salen de Supabase con la función `exportar_corte`: con la clave pública sola no se puede leer la tabla,
+y con la clave de exportación solo se obtiene un corte a la vez. Nada pasa por GitHub (el repo es público).
+
+El token y las claves se guardan solo en ese Chrome (no en el código; el repo es público). Si se pierde o filtra,
 revócalo en GitHub y genera otro.
 
 ---
@@ -216,6 +230,7 @@ api_liquidacion.py   Módulo reutilizado por el job: cliente de Silogtran (login
                      normalización. También puede correr como API REST local (modo anterior, opcional).
 schema.sql           DDL de Supabase (liquidaciones + sync_estado)
 migracion_cortes.sql Agrega cod_corte/fecha_corte a una base que ya existía
+exportar_corte.sql   Función exportar_corte (descarga de un corte desde la extensión) + RLS
 extension-corte/     Extensión de Chrome con el botón "Cerrar corte"
 esquema / normalizar Dentro de api_liquidacion.py: columnas, tipos y limpieza del CSV
 requirements.txt     requests, playwright, psycopg2-binary

@@ -1,6 +1,6 @@
 // Acceso mínimo a la API de GitHub para disparar y seguir el workflow corte.yml.
 const WORKFLOW = "corte.yml";
-const DEFAULTS = { repo: "CALR0/api-liquidacion", token: "" };
+const DEFAULTS = { repo: "CALR0/api-liquidacion", token: "", supabaseUrl: "", supabaseKey: "", claveExport: "" };
 
 async function leerConfig() {
   return { ...DEFAULTS, ...(await chrome.storage.local.get(Object.keys(DEFAULTS))) };

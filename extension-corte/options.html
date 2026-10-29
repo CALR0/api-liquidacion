@@ -23,6 +23,19 @@
   <label for="repo">Repositorio</label>
   <input id="repo">
 
+  <h3>Descarga de cortes (Supabase)</h3>
+  <label for="supabaseUrl">URL del proyecto</label>
+  <input id="supabaseUrl" placeholder="https://xxxx.supabase.co">
+  <small>Supabase → Project Settings → API (o Data API) → Project URL.</small>
+
+  <label for="supabaseKey">Clave pública (anon / publishable)</label>
+  <input id="supabaseKey" type="password" autocomplete="off">
+  <small>Supabase → Project Settings → API Keys. Nunca la <i>service_role</i> / <i>secret</i>.</small>
+
+  <label for="claveExport">Clave de exportación</label>
+  <input id="claveExport" type="password" autocomplete="off">
+  <small>La que se definió en exportar_corte.sql.</small>
+
   <button id="guardar">Guardar</button><span id="guardado"></span>
   <script src="github.js"></script>
   <script src="options.js"></script>
