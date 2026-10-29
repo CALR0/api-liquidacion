@@ -141,15 +141,17 @@ Instalación (una vez, en el equipo de la persona de liquidaciones):
 3. **Supabase → SQL Editor:** ejecutar [`exportar_corte.sql`](exportar_corte.sql) reemplazando
    `REEMPLACE_POR_UNA_CLAVE_LARGA` por una clave larga y aleatoria (la **clave de exportación**). Crea la
    función que entrega solo las filas de un corte y activa RLS en `liquidaciones` (sin afectar a QlikSense).
-4. Clic derecho en el ícono de la extensión → **Opciones** → **Guardar** con:
+4. Clic en el ícono de la extensión → **⚙** (arriba a la derecha; la primera vez se abre sola) → **Guardar** con:
    - **Token de GitHub** (solo el `github_pat_…`, sin `Bearer`).
    - **URL del proyecto** de Supabase (`https://xxxx.supabase.co`) y su **clave pública** (anon / publishable;
      nunca la `service_role` / secret).
    - La **clave de exportación** del paso 3.
 
+Todo ocurre en la ventanita de la extensión, en la misma ventana del navegador: no abre pestañas ni páginas.
+
 Uso: clic en el ícono → **▶ Cerrar corte** → confirmar. En 1–3 minutos muestra, por ejemplo,
 *"✅ Corte 15: 12 liquidaciones (30 filas)"*. Hay que dejar abierta la ventanita mientras procesa; si se
-cierra, el corte igual se completa (se ve en la pestaña Actions).
+cierra, el corte igual se completa y se puede descargar luego por su número.
 
 **Descargar el corte:** al terminar aparece **"⬇ Descargar corte N (Excel)"**, y abajo se puede bajar
 cualquier corte por su número. Descarga `liquidaciones_silogtran_N.xlsx`: una hoja con las columnas del

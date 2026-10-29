@@ -7,7 +7,11 @@
     "default_title": "Cerrar corte de liquidación",
     "default_popup": "popup.html"
   },
-  "options_page": "options.html",
-  "permissions": ["storage"],
-  "host_permissions": ["https://api.github.com/*", "https://*.supabase.co/*"]
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://api.github.com/*",
+    "https://*.supabase.co/*"
+  ]
 }

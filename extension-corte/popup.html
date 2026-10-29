@@ -4,37 +4,71 @@
   <meta charset="utf-8">
   <title>Cerrar corte</title>
   <style>
-    body { font: 14px system-ui, sans-serif; width: 290px; margin: 0; padding: 16px; color: #1f2328; }
-    h1 { font-size: 15px; margin: 0 0 12px; }
-    h2 { font-size: 13px; margin: 18px 0 8px; color: #59636e; }
-    button { width: 100%; padding: 10px; font-size: 15px; font-weight: 600; border: 0; border-radius: 6px;
+    body { font: 13px system-ui, sans-serif; width: 300px; margin: 0; color: #1f2328; }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px;
+             border-bottom: 1px solid #d1d9e0; }
+    header h1 { font-size: 14px; margin: 0; }
+    #engranaje { width: auto; background: none; color: #59636e; font-size: 18px; padding: 2px 4px; line-height: 1; }
+    #engranaje:hover, #engranaje.activo { color: #1f2328; }
+    main { padding: 14px; }
+    button { width: 100%; padding: 9px; font-size: 14px; font-weight: 600; border: 0; border-radius: 6px;
              background: #1f6feb; color: #fff; cursor: pointer; }
     button:disabled { background: #8c959f; cursor: default; }
-    button.secundario { background: #1a7f37; margin-top: 10px; }
-    #estado, #estadoDescarga { margin-top: 10px; min-height: 18px; line-height: 1.4; }
+    button.verde { background: #1a7f37; margin-top: 10px; }
+    .estado { margin-top: 8px; min-height: 16px; line-height: 1.4; }
     .ok { color: #1a7f37; } .error { color: #cf222e; }
-    a { color: #0969da; }
-    .fila { display: flex; gap: 8px; }
-    .fila input { flex: 1; min-width: 0; padding: 8px; font: inherit; border: 1px solid #d1d9e0; border-radius: 6px; }
-    .fila button { width: auto; padding: 8px 12px; font-size: 14px; }
-    #opciones { display: block; margin-top: 14px; font-size: 12px; text-align: right; }
+    h2 { font-size: 12px; margin: 16px 0 6px; color: #59636e; text-transform: uppercase; letter-spacing: .03em; }
+    .fila { display: flex; gap: 6px; }
+    .fila input { flex: 1; min-width: 0; }
+    .fila button { width: auto; padding: 7px 12px; font-size: 13px; }
+    input { width: 100%; box-sizing: border-box; padding: 7px 8px; font: inherit;
+            border: 1px solid #d1d9e0; border-radius: 6px; }
+    label { display: block; margin: 10px 0 3px; font-weight: 600; }
+    small { display: block; margin-top: 2px; color: #59636e; font-size: 11px; }
     [hidden] { display: none !important; }
   </style>
 </head>
 <body>
-  <h1>Corte de liquidación</h1>
-  <button id="cerrar">▶ Cerrar corte</button>
-  <div id="estado"></div>
-  <button id="descargarUltimo" class="secundario" hidden></button>
+  <header>
+    <h1>Corte de liquidación</h1>
+    <button id="engranaje" title="Configuración">⚙</button>
+  </header>
 
-  <h2>Descargar un corte</h2>
-  <div class="fila">
-    <input id="numero" type="number" min="1" placeholder="N.º de corte">
-    <button id="descargar">⬇ Excel</button>
-  </div>
-  <div id="estadoDescarga"></div>
+  <main id="vistaPrincipal">
+    <button id="cerrar">▶ Cerrar corte</button>
+    <div id="estado" class="estado"></div>
+    <button id="descargarUltimo" class="verde" hidden></button>
 
-  <a id="opciones" href="#">Opciones</a>
+    <h2>Descargar un corte</h2>
+    <div class="fila">
+      <input id="numero" type="number" min="1" placeholder="N.º de corte">
+      <button id="descargar">⬇ Excel</button>
+    </div>
+    <div id="estadoDescarga" class="estado"></div>
+  </main>
+
+  <main id="vistaConfig" hidden>
+    <label for="token">Token de GitHub</label>
+    <input id="token" type="password" autocomplete="off" placeholder="github_pat_…">
+    <small>Solo el token, sin "Bearer". Permiso Actions: Read and write.</small>
+
+    <label for="supabaseUrl">URL de Supabase</label>
+    <input id="supabaseUrl" placeholder="https://xxxx.supabase.co">
+
+    <label for="supabaseKey">Clave pública de Supabase</label>
+    <input id="supabaseKey" type="password" autocomplete="off" placeholder="anon / publishable">
+    <small>Nunca la service_role / secret.</small>
+
+    <label for="claveExport">Clave de exportación</label>
+    <input id="claveExport" type="password" autocomplete="off">
+
+    <label for="repo">Repositorio</label>
+    <input id="repo" placeholder="usuario/repositorio">
+
+    <button id="guardar" style="margin-top:14px">Guardar</button>
+    <div id="estadoConfig" class="estado"></div>
+  </main>
+
   <script src="github.js"></script>
   <script src="xlsx.js"></script>
   <script src="exportar.js"></script>
