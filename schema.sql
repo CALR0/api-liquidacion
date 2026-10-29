@@ -75,12 +75,3 @@ create table if not exists public.sync_estado (
   bloqueado_hasta timestamptz,
   actualizado     timestamptz not null default now()
 );
-
--- Registro de cada corte (numeración y auditoría). cod_corte arranca en CORTE_INICIAL.
-create table if not exists public.cortes (
-  cod_corte          int primary key,
-  fecha_corte        timestamptz not null default now(),
-  liquidaciones      int not null,       -- cuántas liquidaciones (liqman_codigo) tomó
-  filas              int not null,       -- cuántas filas (manifiestos)
-  origen             text                -- quién/qué lo disparó (ej. extension-chrome)
-);

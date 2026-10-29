@@ -63,7 +63,7 @@ tipos: `schema.sql`.
 ### 1. Supabase
 
 1. Crea un proyecto en [supabase.com](https://supabase.com) (plan gratis) y guarda la **Database Password**.
-2. **SQL Editor** → ejecuta [`schema.sql`](schema.sql) (crea `liquidaciones`, `cortes` y `sync_estado`).
+2. **SQL Editor** → ejecuta [`schema.sql`](schema.sql) (crea `liquidaciones` y `sync_estado`).
    Si la base ya existía, ejecuta en cambio [`migracion_cortes.sql`](migracion_cortes.sql). Si te avisa
    de RLS, actívalo (es lo correcto; el job escribe como admin y no se ve afectado).
 3. **Project Settings → Database → Connect → "Session pooler"**: copia la cadena, pon la contraseña y
@@ -120,8 +120,8 @@ Cómo funciona (workflow **"Cerrar corte de liquidación"**, `corte.yml`, `MODE=
    `max(último corte + 1, CORTE_INICIAL)`. Así nunca se repite un número; subir `CORTE_INICIAL` hace saltar
    la numeración.
 3. Si no hay liquidaciones nuevas **no crea corte** ni gasta número.
-4. Registra el corte en la tabla `cortes` (número, fecha, cuántas liquidaciones y filas, quién lo disparó)
-   y deja el resultado en la corrida de Actions (lo muestra la extensión).
+4. Todo queda en la misma tabla `liquidaciones` (`cod_corte` y `fecha_corte`); no hay tablas extra. El
+   resultado (número y cantidad) queda en la corrida de Actions y lo muestra la extensión.
 
 Garantías:
 - El corte es **por liquidación**: todos sus manifiestos llevan el mismo; un manifiesto agregado después
@@ -138,7 +138,7 @@ Instalación (una vez, en el equipo de la persona de liquidaciones):
    `api-liquidacion`, permiso **Actions: Read and write**.
 2. Chrome → `chrome://extensions` → activar **Modo de desarrollador** → **Cargar descomprimida** → elegir
    la carpeta `extension-corte`.
-3. Clic derecho en el ícono de la extensión → **Opciones**: pegar el token y su nombre → **Guardar**.
+3. Clic derecho en el ícono de la extensión → **Opciones**: pegar el token → **Guardar**.
 
 Uso: clic en el ícono → **▶ Cerrar corte** → confirmar. En 1–3 minutos muestra, por ejemplo,
 *"✅ Corte 15: 12 liquidaciones (30 filas)"*. Hay que dejar abierta la ventanita mientras procesa; si se
@@ -214,8 +214,8 @@ También puedes dispararlo a mano con **Run workflow** en la pestaña Actions.
 sync.py              Job de sincronización: rango por modo → Silogtran → Supabase (reemplaza cada mes)
 api_liquidacion.py   Módulo reutilizado por el job: cliente de Silogtran (login+WAF+informe), esquema,
                      normalización. También puede correr como API REST local (modo anterior, opcional).
-schema.sql           DDL de Supabase (liquidaciones + cortes + sync_estado)
-migracion_cortes.sql Agrega cod_corte/fecha_corte y la tabla cortes a una base que ya existía
+schema.sql           DDL de Supabase (liquidaciones + sync_estado)
+migracion_cortes.sql Agrega cod_corte/fecha_corte a una base que ya existía
 extension-corte/     Extensión de Chrome con el botón "Cerrar corte"
 esquema / normalizar Dentro de api_liquidacion.py: columnas, tipos y limpieza del CSV
 requirements.txt     requests, playwright, psycopg2-binary

@@ -1,4 +1,4 @@
-const campos = ["token", "origen", "repo"];
+const campos = ["token", "repo"];
 
 leerConfig().then((config) => {
   for (const c of campos) document.getElementById(c).value = config[c];

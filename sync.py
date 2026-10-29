@@ -38,7 +38,6 @@ DB_URL = os.environ.get("SUPABASE_DB_URL", "")
 LOGIN_BACKOFF_MIN = int(os.environ.get("LOGIN_BACKOFF_MIN", "") or 30)
 CORTE_INICIAL = int(os.environ.get("CORTE_INICIAL", "") or 1)
 CORTES_DESDE = os.environ.get("CORTES_DESDE", "")      # yyyy-MM-dd: solo entran liquidaciones desde aquí
-CORTE_ORIGEN = os.environ.get("CORTE_ORIGEN", "") or "manual"
 ZONA = timezone(timedelta(hours=-5))  # Colombia
 
 
@@ -152,7 +151,8 @@ def cerrar_corte(conn):
     desde = date.fromisoformat(CORTES_DESDE)
     with conn.cursor() as cur:
         cur.execute("SELECT pg_advisory_xact_lock(hashtext('corte_liquidacion'))")  # un corte a la vez
-        cur.execute("SELECT coalesce(max(cod_corte), 0) FROM cortes")
+        # Las filas con corte nunca se borran, así que el máximo de la tabla es el último corte usado
+        cur.execute("SELECT coalesce(max(cod_corte), 0) FROM liquidaciones")
         siguiente = max(cur.fetchone()[0] + 1, CORTE_INICIAL)
         cur.execute("""UPDATE liquidaciones SET cod_corte = %s, fecha_corte = now()
                        WHERE cod_corte IS NULL AND liqman_fechacreacion >= %s
@@ -161,9 +161,6 @@ def cerrar_corte(conn):
         if not tomadas:
             conn.rollback()
             return None
-        cur.execute("INSERT INTO cortes(cod_corte, fecha_corte, liquidaciones, filas, origen) "
-                    "VALUES (%s, now(), %s, %s, %s)",
-                    (siguiente, len(set(tomadas)), len(tomadas), CORTE_ORIGEN))
     conn.commit()
     return siguiente, len(set(tomadas)), len(tomadas)
 

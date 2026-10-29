@@ -1,6 +1,6 @@
 // Acceso mínimo a la API de GitHub para disparar y seguir el workflow corte.yml.
 const WORKFLOW = "corte.yml";
-const DEFAULTS = { repo: "CALR0/api-liquidacion", token: "", origen: "" };
+const DEFAULTS = { repo: "CALR0/api-liquidacion", token: "" };
 
 async function leerConfig() {
   return { ...DEFAULTS, ...(await chrome.storage.local.get(Object.keys(DEFAULTS))) };
@@ -30,7 +30,7 @@ async function gh(config, ruta, opciones = {}) {
 async function dispararCorte(config) {
   await gh(config, `/actions/workflows/${WORKFLOW}/dispatches`, {
     method: "POST",
-    body: JSON.stringify({ ref: "main", inputs: { origen: config.origen || "extension-chrome" } }),
+    body: JSON.stringify({ ref: "main" }),
   });
 }
 

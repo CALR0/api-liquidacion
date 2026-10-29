@@ -8,12 +8,7 @@ name: Cerrar corte de liquidación
 #   CORTE_INICIAL  número del primer corte (luego +1 por cada corte con liquidaciones nuevas)
 #   CORTES_DESDE   yyyy-MM-dd: solo entran a un corte las liquidaciones creadas desde esa fecha
 on:
-  workflow_dispatch:
-    inputs:
-      origen:
-        description: "Quién dispara el corte (queda en la tabla cortes)"
-        required: false
-        default: "manual"
+  workflow_dispatch: {}
 
 concurrency:
   group: sync-liquidacion     # misma fila que los crons: nunca corren a la vez
@@ -27,7 +22,6 @@ jobs:
       MODE: corte
       CORTE_INICIAL: ${{ vars.CORTE_INICIAL }}
       CORTES_DESDE: ${{ vars.CORTES_DESDE }}
-      CORTE_ORIGEN: ${{ inputs.origen }}
       SILOGTRAN_USUARIO: ${{ secrets.SILOGTRAN_USUARIO }}
       SILOGTRAN_CLAVE: ${{ secrets.SILOGTRAN_CLAVE }}
       SILOGTRAN_CENTROCOSTO: ${{ secrets.SILOGTRAN_CENTROCOSTO }}
